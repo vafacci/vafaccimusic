@@ -7,6 +7,9 @@ type StatusListener = (status: AudioEngineStatus, error?: string) => void;
 /**
  * Owns Web Audio graph lifecycle.
  * Playback never starts without an explicit play() call.
+ *
+ * Lock-screen / background: when the page is hidden we drop the Web Audio
+ * graph and continue on a plain HTMLAudioElement (iOS suspends AudioContext).
  */
 export class AudioEngine {
   private context: AudioContext | null = null;
@@ -18,9 +21,12 @@ export class AudioEngine {
   private boundSource = false;
   private loadGeneration = 0;
   private endedHandler: (() => void) | null = null;
+  private trackUrl: string | null = null;
+  /** True while page is hidden — play via element only, no MediaElementSource. */
+  private nativeBackground = false;
 
   getBands(): AudioBands {
-    if (!this.analyzer || this.status !== "playing") {
+    if (!this.analyzer || this.status !== "playing" || this.nativeBackground) {
       return {
         bass: 0,
         lowMid: 0,
@@ -36,7 +42,7 @@ export class AudioEngine {
 
   /** Copy smoothed waveform (−1…1). Zeros when not playing. */
   copyWaveform(target: Float32Array): void {
-    if (!this.analyzer || this.status !== "playing") {
+    if (!this.analyzer || this.status !== "playing" || this.nativeBackground) {
       target.fill(0);
       return;
     }
@@ -45,6 +51,10 @@ export class AudioEngine {
 
   getStatus(): AudioEngineStatus {
     return this.status;
+  }
+
+  getTrackUrl(): string | null {
+    return this.trackUrl;
   }
 
   getCurrentTime(): number {
@@ -69,18 +79,15 @@ export class AudioEngine {
   async load(url: string): Promise<void> {
     const generation = ++this.loadGeneration;
     this.setStatus("loading");
+    this.trackUrl = url;
+    this.nativeBackground = false;
 
     try {
       this.pause();
       this.resetGraph();
       this.teardownElement();
 
-      const element = new Audio();
-      element.crossOrigin = "anonymous";
-      element.loop = false;
-      element.preload = "auto";
-      element.src = url;
-      element.style.display = "none";
+      const element = this.createElement(url);
       document.body.appendChild(element);
 
       await new Promise<void>((resolve, reject) => {
@@ -111,15 +118,7 @@ export class AudioEngine {
         return;
       }
 
-      element.addEventListener("ended", () => {
-        if (this.element !== element) return;
-        this.analyzer?.reset();
-        if (this.status === "playing") {
-          this.setStatus("ready");
-        }
-        this.endedHandler?.();
-      });
-
+      this.bindEnded(element);
       this.element = element;
       this.setStatus("ready");
     } catch (error) {
@@ -136,18 +135,24 @@ export class AudioEngine {
       throw new Error("No audio loaded");
     }
 
-    const context = this.ensureContext();
+    this.claimPlaybackSession();
 
-    if (context.state === "suspended") {
-      await context.resume();
-    }
+    if (!this.nativeBackground) {
+      const context = this.ensureContext();
 
-    if (!this.boundSource) {
-      this.source = context.createMediaElementSource(this.element);
-      this.analyzer = new AudioAnalyzer(context);
-      this.analyzer.connect(this.source);
-      this.source.connect(context.destination);
-      this.boundSource = true;
+      if (context.state !== "running") {
+        await context.resume().catch(() => {
+          // iOS may reject while backgrounded; native path handles that
+        });
+      }
+
+      if (!this.boundSource) {
+        this.source = context.createMediaElementSource(this.element);
+        this.analyzer = new AudioAnalyzer(context);
+        this.analyzer.connect(this.source);
+        this.source.connect(context.destination);
+        this.boundSource = true;
+      }
     }
 
     await this.element.play();
@@ -169,11 +174,60 @@ export class AudioEngine {
     this.element.currentTime = Math.min(Math.max(time, 0), duration);
   }
 
+  /**
+   * Call when the tab/app is hidden (lock screen / app switch).
+   * Recreates a plain HTMLAudioElement so playback can continue without Web Audio.
+   */
+  async enterBackgroundPlayback(): Promise<void> {
+    if (!this.element || !this.trackUrl) return;
+    if (this.nativeBackground) return;
+    if (this.status !== "playing") {
+      // Still drop the graph so a later play() while hidden stays native.
+      if (this.boundSource) {
+        const time = this.element.currentTime;
+        this.resetGraph();
+        await this.rebuildElement(this.trackUrl, time, false);
+        this.nativeBackground = true;
+      }
+      return;
+    }
+
+    const time = this.element.currentTime;
+    this.resetGraph();
+    if (this.context) {
+      void this.context.suspend().catch(() => undefined);
+    }
+    await this.rebuildElement(this.trackUrl, time, true);
+    this.nativeBackground = true;
+    this.setStatus("playing");
+  }
+
+  /**
+   * Call when the tab/app is visible again — reattach Web Audio for the entity viz.
+   */
+  async exitBackgroundPlayback(): Promise<void> {
+    if (!this.nativeBackground || !this.element || !this.trackUrl) return;
+
+    const time = this.element.currentTime;
+    const shouldPlay = this.status === "playing" || !this.element.paused;
+
+    this.nativeBackground = false;
+    await this.rebuildElement(this.trackUrl, time, false);
+
+    if (shouldPlay) {
+      await this.play();
+    } else {
+      this.setStatus("ready");
+    }
+  }
+
   dispose(): void {
     this.loadGeneration += 1;
     this.pause();
     this.resetGraph();
     this.teardownElement();
+    this.trackUrl = null;
+    this.nativeBackground = false;
 
     if (this.context) {
       void this.context.close();
@@ -183,9 +237,93 @@ export class AudioEngine {
     this.setStatus("idle");
   }
 
+  private createElement(url: string): HTMLAudioElement {
+    const element = new Audio();
+    element.crossOrigin = "anonymous";
+    element.loop = false;
+    element.preload = "auto";
+    element.setAttribute("playsinline", "");
+    element.setAttribute("webkit-playsinline", "");
+    // Prefer media / playback channel over ringer on supporting browsers
+    try {
+      (
+        element as HTMLAudioElement & { mozAudioChannelType?: string }
+      ).mozAudioChannelType = "content";
+    } catch {
+      // ignore
+    }
+    element.src = url;
+    element.style.display = "none";
+    return element;
+  }
+
+  private bindEnded(element: HTMLAudioElement): void {
+    element.addEventListener("ended", () => {
+      if (this.element !== element) return;
+      this.analyzer?.reset();
+      if (this.status === "playing") {
+        this.setStatus("ready");
+      }
+      this.endedHandler?.();
+    });
+  }
+
+  private async rebuildElement(
+    url: string,
+    time: number,
+    autoplay: boolean,
+  ): Promise<void> {
+    this.teardownElement();
+    const element = this.createElement(url);
+    document.body.appendChild(element);
+    this.bindEnded(element);
+    this.element = element;
+
+    await new Promise<void>((resolve) => {
+      const ready = () => {
+        element.removeEventListener("loadedmetadata", ready);
+        resolve();
+      };
+      if (element.readyState >= 1) resolve();
+      else element.addEventListener("loadedmetadata", ready, { once: true });
+      element.load();
+    });
+
+    if (Number.isFinite(time) && time > 0) {
+      try {
+        element.currentTime = time;
+      } catch {
+        // metadata may still be settling
+      }
+    }
+
+    if (autoplay) {
+      await element.play();
+    }
+  }
+
+  private claimPlaybackSession(): void {
+    if (typeof navigator === "undefined") return;
+    const session = (
+      navigator as Navigator & {
+        audioSession?: { type: string };
+      }
+    ).audioSession;
+    if (session) {
+      try {
+        session.type = "playback";
+      } catch {
+        // unsupported value
+      }
+    }
+  }
+
   private ensureContext(): AudioContext {
-    if (!this.context) {
+    if (!this.context || this.context.state === "closed") {
       this.context = new AudioContext();
+      this.boundSource = false;
+      this.source = null;
+      this.analyzer = null;
     }
     return this.context;
   }

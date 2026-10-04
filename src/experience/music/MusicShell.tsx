@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CATALOG, formatTime } from "@/data/catalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
+import { ensureMediaSession } from "@/experience/audio/mediaSession";
 import { formatPlays, type PlayCounts } from "@/lib/playStats";
 import { useMusicGalleryStore } from "./musicStore";
 
@@ -127,12 +128,35 @@ export function MusicShell() {
   };
 
   useEffect(() => {
-    activeIndexRef.current = 0;
-    setActiveIndex(0);
-    setFloatIndex(0);
-    setScrollProgress(0);
+    ensureMediaSession();
+
+    const params = new URLSearchParams(window.location.search);
+    const trackId = params.get("track");
+    const fromLink = trackId
+      ? CATALOG.findIndex((t) => t.id === trackId)
+      : -1;
+    const startIndex = fromLink >= 0 ? fromLink : 0;
+
+    activeIndexRef.current = startIndex;
+    setActiveIndex(startIndex);
+    setFloatIndex(startIndex);
+    setScrollProgress(
+      CATALOG.length <= 1 ? 0 : startIndex / (CATALOG.length - 1),
+    );
     setBooted(true);
-  }, [setActiveIndex, setFloatIndex, setScrollProgress]);
+
+    // Deep link: open the exact shared track
+    if (fromLink >= 0) {
+      const item = CATALOG[fromLink];
+      if (item?.audio) {
+        void load(item.audio)
+          .then(() => play())
+          .catch(() => {
+            // autoplay may be blocked; track is still loaded/focused
+          });
+      }
+    }
+  }, [load, play, setActiveIndex, setFloatIndex, setScrollProgress]);
 
   useEffect(() => {
     let alive = true;
@@ -509,7 +533,7 @@ export function MusicShell() {
                     d="M15.5 6.5L9 12l6.5 5.5"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="1.6"
+                    strokeWidth="2.2"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
@@ -549,7 +573,7 @@ export function MusicShell() {
                     d="M8.5 6.5L15 12l-6.5 5.5"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="1.6"
+                    strokeWidth="2.2"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />

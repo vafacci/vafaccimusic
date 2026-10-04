@@ -12,7 +12,7 @@ export default function ReleasesPage() {
           fontFamily: '"Times New Roman", Times, serif',
           letterSpacing: "0.18em",
           textTransform: "uppercase",
-          color: "rgba(197, 202, 211, 0.45)",
+          color: "rgba(245, 246, 248, 0.78)",
           fontSize: "0.75rem",
           margin: 0,
         }}

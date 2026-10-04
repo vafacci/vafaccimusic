@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect } from "react";
 import { LAB_01_TRACK } from "@/data/tracks";
 import { useAudioStore } from "@/experience/audio/audioStore";
+import { ensureMediaSession } from "@/experience/audio/mediaSession";
 import { BrandMark } from "./BrandMark";
 import { PlayerFooter } from "./PlayerFooter";
 
@@ -17,6 +18,8 @@ export function Lab01Shell() {
   const load = useAudioStore((state) => state.load);
 
   useEffect(() => {
+    ensureMediaSession();
+
     // Keep whatever is already loaded/playing across page navigations.
     const { trackUrl, status } = useAudioStore.getState();
     if (
