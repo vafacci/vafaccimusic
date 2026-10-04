@@ -5,7 +5,7 @@ import { Suspense } from "react";
 import * as THREE from "three";
 import { MusicAtmosphere } from "./MusicAtmosphere";
 
-/** Sparse particle veil over the dark CSS atmosphere. */
+/** Sparse star rain over the dark CSS atmosphere. */
 export function MusicScene() {
   return (
     <Canvas
@@ -21,7 +21,7 @@ export function MusicScene() {
         gl.setClearColor(0x000000, 0);
         gl.outputColorSpace = THREE.SRGBColorSpace;
         gl.toneMapping = THREE.ACESFilmicToneMapping;
-        gl.toneMappingExposure = 0.9;
+        gl.toneMappingExposure = 0.85;
       }}
     >
       <Suspense fallback={null}>

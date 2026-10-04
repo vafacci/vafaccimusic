@@ -1,13 +1,20 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CATALOG, formatTime } from "@/data/catalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
 import { ensureMediaSession } from "@/experience/audio/mediaSession";
 import { formatPlays, type PlayCounts } from "@/lib/playStats";
-import { PlaylistLoop } from "./PlaylistLoop";
+import { ShowTitle } from "@/experience/ui/ShowTitle";
+import { TrackMoreMenu } from "./TrackMoreMenu";
 import { useMusicGalleryStore } from "./musicStore";
+
+const MusicScene = dynamic(
+  () => import("./MusicScene").then((m) => m.MusicScene),
+  { ssr: false },
+);
 
 function matchesQuery(
   item: (typeof CATALOG)[number],
@@ -24,9 +31,7 @@ function matchesQuery(
 export function MusicShell() {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const activeIndexRef = useRef(0);
-  const rafRef = useRef(0);
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
   const visibleRef = useRef<{ item: (typeof CATALOG)[number]; index: number }[]>(
     [],
   );
@@ -47,11 +52,9 @@ export function MusicShell() {
   const [booted, setBooted] = useState(false);
   const [now, setNow] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [padEndPx, setPadEndPx] = useState(0);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [plays, setPlays] = useState<PlayCounts>({});
-  const [entityScroll, setEntityScroll] = useState(0);
   const pageRef = useRef<HTMLElement>(null);
 
   const release = CATALOG[activeIndex] ?? CATALOG[0]!;
@@ -62,6 +65,15 @@ export function MusicShell() {
   const miniTitle = playingItem?.title ?? release.title;
   const progress =
     duration > 0 ? Math.min(100, Math.max(0, (now / duration) * 100)) : 0;
+  const remaining = Math.max(duration - now, 0);
+  const canPrev =
+    (playingItem != null
+      ? CATALOG.findIndex((t) => t.id === playingItem.id)
+      : activeIndex) > 0;
+  const canNext =
+    (playingItem != null
+      ? CATALOG.findIndex((t) => t.id === playingItem.id)
+      : activeIndex) < CATALOG.length - 1;
 
   const normalized = query.trim().toLowerCase();
   const visible = useMemo(() => {
@@ -73,53 +85,11 @@ export function MusicShell() {
 
   const maxIndex = Math.max(CATALOG.length - 1, 0);
 
-  const syncPad = () => {
-    const root = scrollerRef.current;
-    if (!root) return;
-    const rowH = rowRefs.current.find(Boolean)?.offsetHeight ?? 56;
-    const trackH = visibleRef.current.length * rowH;
-    const needsScroll = trackH > root.clientHeight + 8;
-    setPadEndPx(needsScroll ? Math.max(0, root.clientHeight - rowH) : 0);
-  };
-
-  /** Focus line is the TOP of the list panel (under the 3D hero). */
-  const paintFocus = () => {
-    const root = scrollerRef.current;
-    if (!root) return;
-    const list = visibleRef.current;
-    if (list.length === 0) return;
-
-    let bestCatalog = list[0]!.index;
-    let bestDist = Infinity;
-
-    for (const { index } of list) {
-      const row = rowRefs.current[index];
-      if (!row) continue;
-      const dist = Math.abs(row.offsetTop - root.scrollTop);
-      const norm = Math.min(1, dist / (row.offsetHeight * 1.6));
-      row.style.opacity = String(Math.max(0.3, 1 - norm * 0.58));
-      row.classList.toggle("is-active", norm < 0.42);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestCatalog = index;
-      }
-    }
-
-    if (bestCatalog !== activeIndexRef.current) {
-      activeIndexRef.current = bestCatalog;
-      setActiveIndex(bestCatalog);
-      setFloatIndex(bestCatalog);
-      setScrollProgress(maxIndex === 0 ? 0 : bestCatalog / maxIndex);
-    }
-  };
-
-  const schedulePaint = () => {
-    if (rafRef.current) return;
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = 0;
-      paintFocus();
-    });
-  };
+  function markActive(index: number) {
+    setActiveIndex(index);
+    setFloatIndex(index);
+    setScrollProgress(maxIndex === 0 ? 0 : index / maxIndex);
+  }
 
   useEffect(() => {
     ensureMediaSession();
@@ -131,12 +101,7 @@ export function MusicShell() {
       : -1;
     const startIndex = fromLink >= 0 ? fromLink : 0;
 
-    activeIndexRef.current = startIndex;
-    setActiveIndex(startIndex);
-    setFloatIndex(startIndex);
-    setScrollProgress(
-      CATALOG.length <= 1 ? 0 : startIndex / (CATALOG.length - 1),
-    );
+    markActive(startIndex);
     setBooted(true);
 
     // Deep link: open the exact shared track
@@ -150,6 +115,7 @@ export function MusicShell() {
           });
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, play, setActiveIndex, setFloatIndex, setScrollProgress]);
 
   useEffect(() => {
@@ -187,10 +153,9 @@ export function MusicShell() {
   }, [trackUrl, status]);
 
   function scrollToIndex(index: number, behavior: ScrollBehavior = "smooth") {
-    const root = scrollerRef.current;
     const row = rowRefs.current[index];
-    if (!root || !row) return;
-    root.scrollTo({ top: Math.max(0, row.offsetTop), behavior });
+    if (!row) return;
+    row.scrollIntoView({ behavior, block: "nearest" });
   }
 
   function focusPlayingOrFirst(behavior: ScrollBehavior = "auto") {
@@ -205,39 +170,18 @@ export function MusicShell() {
       : (visibleRef.current[0]?.index ?? -1);
     if (target < 0) return;
     scrollToIndex(target, behavior);
-    activeIndexRef.current = target;
-    setActiveIndex(target);
-    setFloatIndex(target);
-    setScrollProgress(maxIndex === 0 ? 0 : target / maxIndex);
-    schedulePaint();
+    markActive(target);
   }
 
   useEffect(() => {
-    const root = scrollerRef.current;
-    if (!root || !booted) return;
-
+    if (!booted) return;
     requestAnimationFrame(() => {
-      syncPad();
       focusPlayingOrFirst("auto");
-      paintFocus();
     });
-
-    const onResize = () => {
-      syncPad();
-      schedulePaint();
-    };
-
-    root.addEventListener("scroll", schedulePaint, { passive: true });
-    window.addEventListener("resize", onResize);
-    return () => {
-      root.removeEventListener("scroll", schedulePaint);
-      window.removeEventListener("resize", onResize);
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted, normalized, visible.length]);
 
-  // Auto-scroll playlist when the playing track changes (manual select or auto-next).
+  // Keep the playing track in view on auto-next / deep link.
   useEffect(() => {
     if (!booted || !trackUrl) return;
     const index = CATALOG.findIndex((t) => t.audio === trackUrl);
@@ -251,13 +195,8 @@ export function MusicShell() {
     }
 
     requestAnimationFrame(() => {
-      syncPad();
       scrollToIndex(index, "smooth");
-      activeIndexRef.current = index;
-      setActiveIndex(index);
-      setFloatIndex(index);
-      setScrollProgress(maxIndex === 0 ? 0 : index / maxIndex);
-      schedulePaint();
+      markActive(index);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackUrl, booted]);
@@ -276,29 +215,12 @@ export function MusicShell() {
     }
   }, [searchOpen]);
 
-  useEffect(() => {
-    const root = scrollerRef.current;
-    if (!root || !booted) return;
-
-    const onScroll = () => {
-      const rowH = rowRefs.current.find(Boolean)?.offsetHeight ?? 48;
-      const t = Math.min(1, Math.max(0, root.scrollTop / (rowH * 2.4)));
-      setEntityScroll(t);
-      schedulePaint();
-    };
-
-    onScroll();
-    root.addEventListener("scroll", onScroll, { passive: true });
-    return () => root.removeEventListener("scroll", onScroll);
-  }, [booted, visible.length]);
-
   async function onSelect(index: number) {
     const item = CATALOG[index];
     if (!item) return;
 
     scrollToIndex(index);
-    activeIndexRef.current = index;
-    setActiveIndex(index);
+    markActive(index);
 
     if (!item.audio) return;
 
@@ -346,24 +268,22 @@ export function MusicShell() {
     setSearchOpen(false);
   }
 
-  const pageStyle = {
-    "--music-entity-scroll": String(entityScroll),
-  } as CSSProperties;
-
   return (
     <main
       ref={pageRef}
       className="music-page relative h-dvh w-full overflow-hidden text-white"
-      style={pageStyle}
     >
       <div className="music-bg" aria-hidden>
+        <div className="music-bg__stars">
+          {booted ? <MusicScene /> : null}
+        </div>
         <div className="music-bg__haze" />
         <div className="music-bg__grain" />
         <div className="music-bg__vignette" />
       </div>
 
-      <header className="music-header pointer-events-none safe-area-pad px-4 pt-3 md:px-6 md:pt-4">
-        <div className="flex items-center justify-between gap-3">
+      <header className="music-header pointer-events-none">
+        <div className="music-header__bar">
           <Link href="/" className="brand-mark pointer-events-auto">
             VAFACCI
           </Link>
@@ -427,17 +347,8 @@ export function MusicShell() {
       </header>
 
       <div className="music-stage">
-        <div className="music-signature pointer-events-none" aria-hidden>
-          <PlaylistLoop />
-        </div>
-
         <div className="music-playlist">
-          <p className="music-playlist__label">Playlist</p>
           <div className="music-list-shell">
-            <div className="music-focus-rail" aria-hidden>
-              <div className="music-focus-rail__line" />
-            </div>
-
             <div ref={scrollerRef} className="music-list">
               <div className="music-list__track">
                 {visible.length === 0 ? (
@@ -451,128 +362,121 @@ export function MusicShell() {
                     const loadedThis = !!item.audio && trackUrl === item.audio;
 
                     return (
-                      <button
+                      <div
                         key={item.id}
                         ref={(node) => {
                           rowRefs.current[index] = node;
                         }}
-                        type="button"
                         className={`music-row${playingThis ? " is-playing" : ""}${loadedThis ? " is-current" : ""}`}
-                        onClick={() => void onSelect(index)}
-                        aria-label={
-                          item.audio
-                            ? `${playingThis ? "Pause" : "Play"} ${item.title}`
-                            : `${item.title}, coming soon`
-                        }
                       >
-                        <span className="music-row__index">
-                          {String(index + 1).padStart(2, "0")}
-                        </span>
-                        <span className="music-row__body">
-                          <span className="music-row__title">{item.shortTitle}</span>
-                          <span className="music-row__meta">
-                            {playingThis ? "Playing" : item.title}
+                        <button
+                          type="button"
+                          className="music-row__main"
+                          onClick={() => void onSelect(index)}
+                          aria-label={
+                            item.audio
+                              ? `${playingThis ? "Pause" : "Play"} ${item.title}`
+                              : `${item.title}, coming soon`
+                          }
+                        >
+                          <span className="music-row__index">{index + 1}</span>
+                          <span className="music-row__body">
+                            <span className="music-row__title">
+                              {item.shortTitle}
+                            </span>
+                            <span className="music-row__meta">
+                              {playingThis ? "Playing" : item.title}
+                            </span>
                           </span>
-                        </span>
-                        <span className="music-row__end">
-                          <span
-                            className="music-row__plays"
-                            title={`${plays[item.id] ?? 0} plays`}
-                          >
-                            {formatPlays(plays[item.id] ?? 0)}
+                          <span className="music-row__end">
+                            <span
+                              className="music-row__plays"
+                              title={`${plays[item.id] ?? 0} plays`}
+                            >
+                              {formatPlays(plays[item.id] ?? 0)}
+                            </span>
+                            <span className="music-row__duration">
+                              {item.duration ?? "—:—"}
+                            </span>
                           </span>
-                          <span className="music-row__duration">
-                            {item.duration ?? "—:—"}
-                          </span>
-                        </span>
-                      </button>
+                        </button>
+                        <TrackMoreMenu track={item} />
+                      </div>
                     );
                   })
                 )}
               </div>
-              <div
-                className="music-list__pad-end"
-                style={{ height: padEndPx }}
-                aria-hidden
-              />
             </div>
           </div>
         </div>
 
-        <div className="music-mini safe-area-pad px-4 pb-3 md:px-6 md:pb-4">
+        <div className="music-mini">
           <div className="music-mini__bar">
-            <div className="music-mini__info">
-              <p className="music-mini__title">{miniTitle}</p>
-              <p className="music-mini__time">
-                {playingItem
-                  ? `${formatTime(now)} / ${duration > 0 ? formatTime(duration) : (playingItem.duration ?? "0:00")}`
-                  : `${CATALOG.length} tracks`}
-              </p>
-            </div>
-
-            <div className="music-mini__controls">
-              <button
-                type="button"
-                className="music-mini__ctrl"
-                onClick={() => void onStep(-1)}
-                aria-label="Previous track"
-                disabled={
-                  (playingItem != null
-                    ? CATALOG.findIndex((t) => t.id === playingItem.id)
-                    : activeIndex) <= 0
-                }
-              >
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <path
-                    d="M15.5 6.5L9 12l6.5 5.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className="music-mini__ctrl music-mini__ctrl--play"
-                onClick={() => void onMiniToggle()}
-                aria-label={isPlaying ? "Pause" : "Play"}
-                disabled={!release.audio && !playingItem?.audio}
-              >
-                {isPlaying ? (
-                  <svg viewBox="0 0 24 24" aria-hidden>
-                    <rect x="7" y="6" width="3.2" height="12" fill="currentColor" />
-                    <rect x="13.8" y="6" width="3.2" height="12" fill="currentColor" />
+            <div className="music-mini__top">
+              <ShowTitle title={miniTitle} />
+              <div className="music-mini__controls">
+                <button
+                  type="button"
+                  className="music-mini__ctrl"
+                  onClick={() => void onStep(-1)}
+                  aria-label="Previous track"
+                  disabled={!canPrev}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      d="M18.5 6.5v11L9 12l9.5-5.5zM6.5 6.5v11"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
                   </svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" aria-hidden>
-                    <path d="M9 7.2v9.6L17.2 12z" fill="currentColor" />
+                </button>
+                <button
+                  type="button"
+                  className="music-mini__ctrl music-mini__ctrl--play"
+                  onClick={() => void onMiniToggle()}
+                  aria-label={isPlaying ? "Pause" : "Play"}
+                  disabled={!release.audio && !playingItem?.audio}
+                >
+                  {isPlaying ? (
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path
+                        d="M8 7h2.2v10H8V7zM13.8 7H16v10h-2.2V7z"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path
+                        d="M9 7.5v9l8-4.5-8-4.5z"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="music-mini__ctrl"
+                  onClick={() => void onStep(1)}
+                  aria-label="Next track"
+                  disabled={!canNext}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+                    <path
+                      d="M5.5 6.5v11L15 12 5.5 6.5zM17.5 6.5v11"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                    />
                   </svg>
-                )}
-              </button>
-              <button
-                type="button"
-                className="music-mini__ctrl"
-                onClick={() => void onStep(1)}
-                aria-label="Next track"
-                disabled={
-                  (playingItem != null
-                    ? CATALOG.findIndex((t) => t.id === playingItem.id)
-                    : activeIndex) >= CATALOG.length - 1
-                }
-              >
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <path
-                    d="M8.5 6.5L15 12l-6.5 5.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
+                </button>
+              </div>
             </div>
 
             <input
@@ -587,6 +491,15 @@ export function MusicShell() {
               style={{ "--progress": `${progress}%` } as CSSProperties}
               aria-label="Seek"
             />
+
+            <div className="music-mini__times">
+              <span>{playingItem ? formatTime(now) : "0:00"}</span>
+              <span>
+                {playingItem && duration > 0
+                  ? `-${formatTime(remaining)}`
+                  : `-${playingItem?.duration ?? "0:00"}`}
+              </span>
+            </div>
           </div>
         </div>
       </div>
