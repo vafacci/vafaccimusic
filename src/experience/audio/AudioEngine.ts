@@ -4,29 +4,40 @@ export type AudioEngineStatus = "idle" | "loading" | "ready" | "playing" | "erro
 
 type StatusListener = (status: AudioEngineStatus, error?: string) => void;
 
+type CaptureCapableMedia = HTMLAudioElement & {
+  captureStream?: () => MediaStream;
+  mozCaptureStream?: () => MediaStream;
+};
+
 /**
- * Owns Web Audio graph lifecycle.
- * Playback never starts without an explicit play() call.
+ * Owns playback + optional Web Audio analysis.
  *
- * Lock-screen / background: when the page is hidden we drop the Web Audio
- * graph and continue on a plain HTMLAudioElement (iOS suspends AudioContext).
+ * Speakers always come from a long-lived HTMLAudioElement.
+ * Analysis is opt-in (visual lab) and prefers captureStream so iOS can keep
+ * playing after the tab is hidden / the phone is locked.
  */
 export class AudioEngine {
   private context: AudioContext | null = null;
   private element: HTMLAudioElement | null = null;
   private source: MediaElementAudioSourceNode | null = null;
+  private streamSource: MediaStreamAudioSourceNode | null = null;
+  private captureStream: MediaStream | null = null;
   private analyzer: AudioAnalyzer | null = null;
   private status: AudioEngineStatus = "idle";
   private listeners = new Set<StatusListener>();
-  private boundSource = false;
   private loadGeneration = 0;
   private endedHandler: (() => void) | null = null;
   private trackUrl: string | null = null;
-  /** True while page is hidden — play via element only, no MediaElementSource. */
-  private nativeBackground = false;
+  /** Visual lab wants band/waveform data. */
+  private analysisWanted = false;
+  /** True after createMediaElementSource — element no longer has native output. */
+  private usingMediaElementSource = false;
+  /** Page is hidden; keep analysis detached until visible again. */
+  private backgrounded = false;
+  private handoffChain: Promise<void> = Promise.resolve();
 
   getBands(): AudioBands {
-    if (!this.analyzer || this.status !== "playing" || this.nativeBackground) {
+    if (!this.analyzer || this.status !== "playing" || this.backgrounded) {
       return {
         bass: 0,
         lowMid: 0,
@@ -42,7 +53,7 @@ export class AudioEngine {
 
   /** Copy smoothed waveform (−1…1). Zeros when not playing. */
   copyWaveform(target: Float32Array): void {
-    if (!this.analyzer || this.status !== "playing" || this.nativeBackground) {
+    if (!this.analyzer || this.status !== "playing" || this.backgrounded) {
       target.fill(0);
       return;
     }
@@ -76,15 +87,32 @@ export class AudioEngine {
     this.endedHandler = handler;
   }
 
+  /**
+   * Enable/disable FFT analysis for the visual lab.
+   * Safe to call from React mount/unmount — releases MediaElementSource while
+   * visible so /music can background-play on a plain element.
+   */
+  setAnalysisEnabled(enabled: boolean): void {
+    this.analysisWanted = enabled;
+    if (!enabled) {
+      void this.withHandoff(async () => {
+        await this.detachAnalysis({ restoreNativeOutput: true });
+      });
+      return;
+    }
+    if (!this.backgrounded && this.status === "playing") {
+      void this.attachAnalysis().catch(() => undefined);
+    }
+  }
+
   async load(url: string): Promise<void> {
     const generation = ++this.loadGeneration;
     this.setStatus("loading");
     this.trackUrl = url;
-    this.nativeBackground = false;
 
     try {
       this.pause();
-      this.resetGraph();
+      await this.detachAnalysis({ restoreNativeOutput: false });
       this.teardownElement();
 
       const element = this.createElement(url);
@@ -120,6 +148,7 @@ export class AudioEngine {
 
       this.bindEnded(element);
       this.element = element;
+      this.usingMediaElementSource = false;
       this.setStatus("ready");
     } catch (error) {
       if (generation !== this.loadGeneration) return;
@@ -137,22 +166,8 @@ export class AudioEngine {
 
     this.claimPlaybackSession();
 
-    if (!this.nativeBackground) {
-      const context = this.ensureContext();
-
-      if (context.state !== "running") {
-        await context.resume().catch(() => {
-          // iOS may reject while backgrounded; native path handles that
-        });
-      }
-
-      if (!this.boundSource) {
-        this.source = context.createMediaElementSource(this.element);
-        this.analyzer = new AudioAnalyzer(context);
-        this.analyzer.connect(this.source);
-        this.source.connect(context.destination);
-        this.boundSource = true;
-      }
+    if (!this.backgrounded && this.analysisWanted) {
+      await this.attachAnalysis().catch(() => undefined);
     }
 
     await this.element.play();
@@ -175,59 +190,67 @@ export class AudioEngine {
   }
 
   /**
-   * Call when the tab/app is hidden (lock screen / app switch).
-   * Recreates a plain HTMLAudioElement so playback can continue without Web Audio.
+   * Page/tab hidden or phone locked.
+   * Prefer leaving the same HTMLAudioElement running (native output).
+   * Only rebuild when MediaElementSource stole the speakers.
    */
   async enterBackgroundPlayback(): Promise<void> {
-    if (!this.element || !this.trackUrl) return;
-    if (this.nativeBackground) return;
-    if (this.status !== "playing") {
-      // Still drop the graph so a later play() while hidden stays native.
-      if (this.boundSource) {
-        const time = this.element.currentTime;
-        this.resetGraph();
-        await this.rebuildElement(this.trackUrl, time, false);
-        this.nativeBackground = true;
-      }
-      return;
-    }
+    await this.withHandoff(async () => {
+      if (!this.element || !this.trackUrl) return;
+      if (this.backgrounded) return;
 
-    const time = this.element.currentTime;
-    this.resetGraph();
-    if (this.context) {
-      void this.context.suspend().catch(() => undefined);
-    }
-    await this.rebuildElement(this.trackUrl, time, true);
-    this.nativeBackground = true;
-    this.setStatus("playing");
+      this.backgrounded = true;
+
+      if (this.context?.state === "running") {
+        void this.context.suspend().catch(() => undefined);
+      }
+
+      // captureStream / no-analysis: element already owns speakers — do nothing.
+      if (!this.usingMediaElementSource) {
+        this.detachCaptureTap();
+        return;
+      }
+
+      // MediaElementSource path: speakers die with AudioContext — rebuild native.
+      const time = this.element.currentTime;
+      const shouldPlay =
+        this.status === "playing" || (this.element && !this.element.paused);
+
+      await this.detachAnalysis({ restoreNativeOutput: false });
+      await this.rebuildElement(this.trackUrl, time, !!shouldPlay);
+
+      if (shouldPlay && this.element && !this.element.paused) {
+        this.setStatus("playing");
+      }
+    });
   }
 
   /**
-   * Call when the tab/app is visible again — reattach Web Audio for the entity viz.
+   * Tab visible again — resume context and reattach analysis if the lab wants it.
    */
   async exitBackgroundPlayback(): Promise<void> {
-    if (!this.nativeBackground || !this.element || !this.trackUrl) return;
+    await this.withHandoff(async () => {
+      if (!this.backgrounded) return;
+      this.backgrounded = false;
 
-    const time = this.element.currentTime;
-    const shouldPlay = this.status === "playing" || !this.element.paused;
+      if (this.context && this.context.state === "suspended") {
+        await this.context.resume().catch(() => undefined);
+      }
 
-    this.nativeBackground = false;
-    await this.rebuildElement(this.trackUrl, time, false);
-
-    if (shouldPlay) {
-      await this.play();
-    } else {
-      this.setStatus("ready");
-    }
+      if (this.analysisWanted && this.status === "playing") {
+        await this.attachAnalysis().catch(() => undefined);
+      }
+    });
   }
 
   dispose(): void {
     this.loadGeneration += 1;
     this.pause();
-    this.resetGraph();
+    void this.detachAnalysis({ restoreNativeOutput: false });
     this.teardownElement();
     this.trackUrl = null;
-    this.nativeBackground = false;
+    this.backgrounded = false;
+    this.analysisWanted = false;
 
     if (this.context) {
       void this.context.close();
@@ -235,6 +258,116 @@ export class AudioEngine {
     }
 
     this.setStatus("idle");
+  }
+
+  private withHandoff(fn: () => Promise<void>): Promise<void> {
+    const run = this.handoffChain.then(fn, fn);
+    this.handoffChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async attachAnalysis(): Promise<void> {
+    if (!this.element || this.backgrounded || !this.analysisWanted) return;
+    if (this.analyzer && (this.streamSource || this.source)) return;
+
+    this.claimPlaybackSession();
+    const context = this.ensureContext();
+    if (context.state !== "running") {
+      await context.resume().catch(() => undefined);
+    }
+
+    const stream = this.tryCaptureStream(this.element);
+    if (stream) {
+      this.captureStream = stream;
+      this.streamSource = context.createMediaStreamSource(stream);
+      this.analyzer = new AudioAnalyzer(context);
+      this.analyzer.connect(this.streamSource);
+      // Element keeps native speaker output — do not connect to destination.
+      return;
+    }
+
+    // Fallback: MediaElementSource steals native output (Chrome/Safari older).
+    this.source = context.createMediaElementSource(this.element);
+    this.analyzer = new AudioAnalyzer(context);
+    this.analyzer.connect(this.source);
+    this.source.connect(context.destination);
+    this.usingMediaElementSource = true;
+  }
+
+  private async detachAnalysis(options: {
+    restoreNativeOutput: boolean;
+  }): Promise<void> {
+    const hadMediaElementSource = this.usingMediaElementSource;
+    const time = this.element?.currentTime ?? 0;
+    const url = this.trackUrl;
+    const wasPlaying =
+      this.status === "playing" || (!!this.element && !this.element.paused);
+
+    this.detachCaptureTap();
+
+    try {
+      this.source?.disconnect();
+    } catch {
+      // already disconnected
+    }
+    this.source = null;
+    this.analyzer = null;
+
+    if (
+      options.restoreNativeOutput &&
+      hadMediaElementSource &&
+      url &&
+      this.element
+    ) {
+      await this.rebuildElement(url, time, wasPlaying);
+      this.usingMediaElementSource = false;
+      if (wasPlaying && this.element && !this.element.paused) {
+        this.setStatus("playing");
+      }
+      return;
+    }
+
+    if (!hadMediaElementSource) {
+      this.usingMediaElementSource = false;
+    }
+  }
+
+  private detachCaptureTap(): void {
+    try {
+      this.streamSource?.disconnect();
+    } catch {
+      // ignore
+    }
+    this.streamSource = null;
+
+    if (this.captureStream) {
+      for (const track of this.captureStream.getTracks()) {
+        track.stop();
+      }
+      this.captureStream = null;
+    }
+
+    if (!this.usingMediaElementSource) {
+      this.analyzer = null;
+    }
+  }
+
+  private tryCaptureStream(element: HTMLAudioElement): MediaStream | null {
+    const media = element as CaptureCapableMedia;
+    try {
+      if (typeof media.captureStream === "function") {
+        return media.captureStream();
+      }
+      if (typeof media.mozCaptureStream === "function") {
+        return media.mozCaptureStream();
+      }
+    } catch {
+      return null;
+    }
+    return null;
   }
 
   private createElement(url: string): HTMLAudioElement {
@@ -273,11 +406,10 @@ export class AudioEngine {
     time: number,
     autoplay: boolean,
   ): Promise<void> {
-    this.teardownElement();
+    const previous = this.element;
     const element = this.createElement(url);
     document.body.appendChild(element);
     this.bindEnded(element);
-    this.element = element;
 
     await new Promise<void>((resolve) => {
       const ready = () => {
@@ -297,9 +429,24 @@ export class AudioEngine {
       }
     }
 
+    // Start the replacement before killing the old node (keeps media session warmer).
     if (autoplay) {
-      await element.play();
+      try {
+        await element.play();
+      } catch {
+        // iOS may block play() after hide — UI can resume on next tap
+      }
     }
+
+    if (previous) {
+      previous.pause();
+      previous.removeAttribute("src");
+      previous.load();
+      previous.remove();
+    }
+
+    this.element = element;
+    this.usingMediaElementSource = false;
   }
 
   private claimPlaybackSession(): void {
@@ -320,23 +467,20 @@ export class AudioEngine {
 
   private ensureContext(): AudioContext {
     if (!this.context || this.context.state === "closed") {
-      this.context = new AudioContext();
-      this.boundSource = false;
+      const AC =
+        window.AudioContext ||
+        (
+          window as unknown as {
+            webkitAudioContext?: typeof AudioContext;
+          }
+        ).webkitAudioContext;
+      this.context = AC ? new AC() : new AudioContext();
       this.source = null;
+      this.streamSource = null;
       this.analyzer = null;
+      this.usingMediaElementSource = false;
     }
     return this.context;
-  }
-
-  private resetGraph(): void {
-    try {
-      this.source?.disconnect();
-    } catch {
-      // already disconnected
-    }
-    this.source = null;
-    this.analyzer = null;
-    this.boundSource = false;
   }
 
   private teardownElement(): void {
@@ -347,6 +491,7 @@ export class AudioEngine {
       this.element.remove();
       this.element = null;
     }
+    this.usingMediaElementSource = false;
   }
 
   private setStatus(status: AudioEngineStatus, error?: string): void {

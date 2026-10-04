@@ -50,6 +50,14 @@ type ExperienceProps = {
 
 export function Experience({ frame = "full" }: ExperienceProps) {
   const zScale = frame === "signature" ? 0.78 : 1;
+  const engine = useAudioStore((state) => state.engine);
+
+  // Analysis only while the visual lab is mounted — keeps /music on native
+  // HTMLAudioElement so lock-screen / background playback can continue.
+  useEffect(() => {
+    engine.setAnalysisEnabled(true);
+    return () => engine.setAnalysisEnabled(false);
+  }, [engine]);
 
   return (
     <Canvas

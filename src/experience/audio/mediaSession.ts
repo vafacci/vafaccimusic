@@ -118,21 +118,34 @@ export function ensureMediaSession(): void {
     }
   }, 1000);
 
+  let hideTimer: number | null = null;
+
   const onVisibility = () => {
     const engine = useAudioStore.getState().engine;
     if (document.visibilityState === "hidden") {
-      void engine.enterBackgroundPlayback();
-    } else {
-      void engine.exitBackgroundPlayback().catch(() => {
-        // user may need to tap play if iOS blocked resume
-      });
+      // Debounce pagehide + visibilitychange double-fire
+      if (hideTimer != null) window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(() => {
+        hideTimer = null;
+        void engine.enterBackgroundPlayback();
+      }, 40);
+      return;
     }
+    if (hideTimer != null) {
+      window.clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    void engine.exitBackgroundPlayback().catch(() => {
+      // user may need to tap play if iOS blocked resume
+    });
   };
 
   document.addEventListener("visibilitychange", onVisibility);
 
   // iOS sometimes fires pagehide without a clean visibility flip
   window.addEventListener("pagehide", () => {
-    void useAudioStore.getState().engine.enterBackgroundPlayback();
+    if (document.visibilityState === "hidden") {
+      void useAudioStore.getState().engine.enterBackgroundPlayback();
+    }
   });
 }
