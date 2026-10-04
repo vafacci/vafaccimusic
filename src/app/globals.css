@@ -1,8 +1,11 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Temporary Lab tokens — replace when palette is decided */
+  --lab-bg: #000000;
+  --lab-fg: #ececec;
+  --background: var(--lab-bg);
+  --foreground: var(--lab-fg);
 }
 
 @theme inline {
@@ -12,15 +15,555 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: var(--lab-bg);
+  color: var(--lab-fg);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), sans-serif;
+}
+
+.safe-area-pad {
+  padding-top: max(1.25rem, env(safe-area-inset-top));
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  padding-left: max(1.25rem, env(safe-area-inset-left));
+  padding-right: max(1.25rem, env(safe-area-inset-right));
+}
+
+/* Stadium brand — logo left */
+.brand-mark {
+  margin: 0;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.78rem;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(230, 233, 238, 0.88);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.brand-mark:hover,
+.brand-mark:focus-visible {
+  color: rgba(255, 255, 255, 0.98);
+  outline: none;
+}
+
+.top-link {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(220, 224, 232, 0.78);
+  text-decoration: none;
+  background: none;
+  border: 0;
+  padding: 0.35rem 0;
+  transition: color 0.2s ease;
+}
+
+.top-link:hover,
+.top-link:focus-visible {
+  color: rgba(255, 255, 255, 0.96);
+  outline: none;
+}
+
+/* /music — dark cinematic playlist */
+.music-page {
+  /* Thermal / night-vision: cold blue → NV green → hot orange */
+  --music-accent: #1aff6a;
+  --music-accent-soft: #1aff6a;
+  --music-accent-cold: #0a4a8c;
+  --music-row-h: 4rem;
+  --music-visible-rows: 3;
+  --music-list-h: calc(var(--music-row-h) * var(--music-visible-rows));
+  --music-mini-h: calc(6.75rem + env(safe-area-inset-bottom, 0px));
+  background: #000000;
+  color: #e8f0ec;
+}
+
+.music-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: #000000;
+  overflow: hidden;
+}
+
+.music-bg__haze {
+  position: absolute;
+  inset: -10%;
+  background:
+    radial-gradient(ellipse 55% 40% at 18% 22%, rgba(10, 74, 140, 0.22), transparent 62%),
+    radial-gradient(ellipse 48% 36% at 82% 78%, rgba(26, 255, 106, 0.08), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 50% 110%, rgba(255, 61, 20, 0.06), transparent 55%);
+  animation: music-haze-drift 18s ease-in-out infinite alternate;
+}
+
+.music-bg__grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.12;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+.music-bg__vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 75% 65% at 50% 45%,
+    transparent 0%,
+    rgba(0, 0, 0, 0.45) 72%,
+    rgba(0, 0, 0, 0.78) 100%
+  );
+}
+
+@keyframes music-haze-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(1.5%, -1.2%, 0) scale(1.03);
+  }
+}
+
+.music-kicker {
+  margin: 0;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(197, 202, 211, 0.42);
+}
+
+.music-kicker--btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  color: rgba(197, 202, 211, 0.55);
+}
+
+.music-kicker--btn:active {
+  color: rgba(244, 245, 247, 0.9);
+}
+
+.music-search-wrap {
+  min-width: 0;
+  max-width: min(58vw, 14rem);
+}
+
+.music-search {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-bottom: 1px solid rgba(26, 255, 106, 0.4);
+  padding-bottom: 0.15rem;
+}
+
+.music-search__input {
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(244, 245, 247, 0.92);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.music-search__input::placeholder {
+  color: rgba(160, 166, 176, 0.4);
+  text-transform: uppercase;
+}
+
+.music-search__input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.music-search__clear {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.1rem 0.15rem;
+  border: 0;
+  background: transparent;
+  color: rgba(197, 202, 211, 0.45);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.music-search-empty {
+  margin: 1.25rem 0 0;
+  text-align: center;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(160, 166, 176, 0.4);
+}
+
+/* Full-bleed 3D stage — same canvas framing as landing */
+.music-hero {
+  inset: 0;
+  height: auto;
+  overflow: hidden;
+}
+
+/* Compact playlist overlay — 4 rows, rest scrolls underneath */
+.music-list-shell {
+  top: auto;
+  bottom: var(--music-mini-h);
+  height: var(--music-list-h);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 0, 0, 0.55) 28%,
+    rgba(0, 0, 0, 0.88) 100%
+  );
+}
+
+.music-focus-rail {
+  position: relative;
+  flex-shrink: 0;
+  height: 0;
+  z-index: 2;
+}
+
+.music-focus-rail__line {
+  width: min(92vw, 26rem);
+  margin: 0 auto;
+  height: var(--music-row-h);
+  border-top: 1px solid rgba(26, 255, 106, 0.32);
+  border-bottom: 1px solid rgba(26, 255, 106, 0.32);
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    rgba(26, 255, 106, 0.06) 20%,
+    rgba(26, 255, 106, 0.06) 80%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+}
+
+.music-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: auto;
+  touch-action: pan-y;
+  padding: 0.35rem 0 0.5rem;
+}
+
+.music-list__track {
+  width: min(92vw, 26rem);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.music-list__pad-end {
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.music-row {
+  position: relative;
+  width: 100%;
+  height: var(--music-row-h);
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr) 3.5rem;
+  align-items: center;
+  column-gap: 0.85rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+  text-align: left;
+  color: inherit;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  will-change: opacity;
+  box-sizing: border-box;
+}
+
+.music-row:focus,
+.music-row:focus-visible,
+.music-row:active {
+  outline: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.music-row__index {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.55rem;
+  letter-spacing: 0.18em;
+  color: rgba(160, 166, 176, 0.38);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.music-row.is-active .music-row__index {
+  color: var(--music-accent-soft);
+}
+
+.music-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.music-row__title {
+  font-family: "Times New Roman", Times, serif;
+  font-size: clamp(0.78rem, 3.2vw, 0.95rem);
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  text-indent: 0;
+  text-transform: uppercase;
+  color: rgba(210, 214, 220, 0.5);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.music-row.is-active .music-row__title {
+  color: rgba(244, 245, 247, 0.96);
+}
+
+.music-row__meta {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.5rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(160, 166, 176, 0.36);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 0.7rem;
+  opacity: 0;
+}
+
+.music-row.is-active .music-row__meta {
+  opacity: 1;
+}
+
+.music-row.is-playing .music-row__meta {
+  color: var(--music-accent-soft);
+}
+
+.music-row__end {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.music-row__duration {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+  color: rgba(160, 166, 176, 0.34);
+  width: 2.4rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.music-row.is-active .music-row__duration {
+  color: rgba(210, 214, 220, 0.62);
+}
+
+.music-mini {
+  min-height: var(--music-mini-h);
+  background: rgba(0, 0, 0, 0.92);
+}
+
+.music-mini__bar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 0.75rem;
+  row-gap: 0.5rem;
+  align-items: center;
+  max-width: 26rem;
+  margin: 0 auto;
+  padding: 0.65rem 0.15rem 0.35rem;
+  border-top: 1px solid rgba(26, 255, 106, 0.18);
+  background: transparent;
+}
+
+.music-mini__info {
+  min-width: 0;
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.music-mini__controls {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.15rem;
+}
+
+.music-mini__ctrl {
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(230, 232, 236, 0.88);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.music-mini__ctrl:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.music-mini__ctrl svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.music-mini__ctrl--play svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.music-mini__title {
+  margin: 0;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(230, 232, 236, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.music-mini__time {
+  margin: 0.15rem 0 0;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  color: rgba(160, 166, 176, 0.42);
+}
+
+.music-mini__seek {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  width: 100%;
+}
+
+/* Stadium LED title — track only, bottom-left */
+.show-title__line {
+  margin: 0;
+  text-align: left;
+  font-size: clamp(0.78rem, 2.8vw, 0.95rem);
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(220, 224, 232, 0.92);
+  text-shadow: 0 0 40px rgba(0, 0, 0, 0.55);
+}
+
+/* Seek fill — thermal green on music, silver elsewhere */
+.player-seek {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    rgba(197, 202, 211, 0.85) 0%,
+    rgba(197, 202, 211, 0.85) var(--progress, 0%),
+    rgba(197, 202, 211, 0.22) var(--progress, 0%),
+    rgba(197, 202, 211, 0.22) 100%
+  );
+  outline: none;
+  cursor: pointer;
+}
+
+.music-page .player-seek {
+  background: linear-gradient(
+    to right,
+    rgba(26, 255, 106, 0.9) 0%,
+    rgba(26, 255, 106, 0.9) var(--progress, 0%),
+    rgba(10, 74, 140, 0.35) var(--progress, 0%),
+    rgba(10, 74, 140, 0.35) 100%
+  );
+}
+
+.player-seek:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.player-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #0a0a0a;
+  border: 1.5px solid rgba(197, 202, 211, 0.9);
+  box-shadow: none;
+}
+
+.music-page .player-seek::-webkit-slider-thumb {
+  border-color: rgba(26, 255, 106, 0.95);
+}
+
+.player-seek::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #0a0a0a;
+  border: 1.5px solid rgba(197, 202, 211, 0.9);
+}
+
+.music-page .player-seek::-moz-range-thumb {
+  border-color: rgba(26, 255, 106, 0.95);
+}
+
+.player-seek::-moz-range-track {
+  background: transparent;
+  border: 0;
 }
