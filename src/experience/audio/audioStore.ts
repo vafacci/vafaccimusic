@@ -2,10 +2,33 @@
 
 import { create } from "zustand";
 import {
+  getCatalogByAudio,
+  getCatalogIndexByAudio,
+  CATALOG,
+} from "@/data/catalog";
+import {
   WAVEFORM_SIZE,
   type AudioBands,
 } from "./AudioAnalyzer";
 import { AudioEngine, type AudioEngineStatus } from "./AudioEngine";
+
+/** Last track URL we already counted a listen for (avoid pause/resume doubles). */
+let lastCountedUrl: string | null = null;
+
+function recordPlay(trackUrl: string | null) {
+  if (!trackUrl || typeof window === "undefined") return;
+  if (trackUrl === lastCountedUrl) return;
+  lastCountedUrl = trackUrl;
+  const track = getCatalogByAudio(trackUrl);
+  void fetch("/api/plays", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trackId: track.id }),
+    keepalive: true,
+  }).catch(() => {
+    // analytics must never break playback
+  });
+}
 
 /**
  * Mutable analysis snapshot — read from useFrame, not React state.
@@ -56,6 +79,18 @@ export const useAudioStore = create<AudioStore>((set, get) => {
     set({ status, error: error ?? null });
   });
 
+  engine.onEnded(() => {
+    const { trackUrl, load, play } = get();
+    const index = getCatalogIndexByAudio(trackUrl);
+    const next = CATALOG[index + 1];
+    if (!next?.audio) return;
+    void load(next.audio)
+      .then(() => play())
+      .catch(() => {
+        // leave status/error from load
+      });
+  });
+
   return {
     engine,
     status: engine.getStatus(),
@@ -64,12 +99,23 @@ export const useAudioStore = create<AudioStore>((set, get) => {
     saved: readSaved(),
 
     async load(url: string) {
+      const current = get();
+      // Same track already in engine — never tear down (keeps playback across pages).
+      if (
+        current.trackUrl === url &&
+        (current.status === "playing" ||
+          current.status === "ready" ||
+          current.status === "loading")
+      ) {
+        return;
+      }
       set({ trackUrl: url, error: null });
       await engine.load(url);
     },
 
     async play() {
       await engine.play();
+      recordPlay(get().trackUrl);
     },
 
     pause() {

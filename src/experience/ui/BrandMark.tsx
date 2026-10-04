@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 /**
- * Top chrome — VAFACCI logo left, Music / Releases right.
+ * Top chrome — VAFACCI logo left, Playlist / Releases right.
  */
 export function BrandMark() {
   return (
@@ -12,7 +12,7 @@ export function BrandMark() {
         </Link>
         <nav className="pointer-events-auto flex items-center gap-5 md:gap-7">
           <Link href="/music" className="top-link">
-            Music
+            Playlist
           </Link>
           <Link href="/releases" className="top-link">
             Releases

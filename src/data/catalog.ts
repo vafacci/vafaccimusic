@@ -111,3 +111,22 @@ export function formatTime(seconds: number): string {
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
+
+/** Resolve catalog entry from the currently loaded audio URL. */
+export function getCatalogByAudio(
+  url: string | null | undefined,
+): CatalogRelease {
+  if (url) {
+    const hit = CATALOG.find((t) => t.audio === url);
+    if (hit) return hit;
+  }
+  return CATALOG[0]!;
+}
+
+export function getCatalogIndexByAudio(
+  url: string | null | undefined,
+): number {
+  if (!url) return 0;
+  const i = CATALOG.findIndex((t) => t.audio === url);
+  return i >= 0 ? i : 0;
+}

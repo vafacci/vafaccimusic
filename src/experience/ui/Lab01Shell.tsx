@@ -17,6 +17,15 @@ export function Lab01Shell() {
   const load = useAudioStore((state) => state.load);
 
   useEffect(() => {
+    // Keep whatever is already loaded/playing across page navigations.
+    const { trackUrl, status } = useAudioStore.getState();
+    if (
+      trackUrl &&
+      (status === "playing" || status === "ready" || status === "loading")
+    ) {
+      return;
+    }
+
     let active = true;
     void load(LAB_01_TRACK.audio).catch(() => {
       if (!active) return;

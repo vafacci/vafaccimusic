@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties } from "react";
+import {
+  CATALOG,
+  getCatalogByAudio,
+  getCatalogIndexByAudio,
+} from "@/data/catalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
 import { shareStoryFrame } from "./shareFrame";
 import { ShowTitle } from "./ShowTitle";
@@ -106,6 +111,8 @@ function IconShare() {
 export function PlayerFooter() {
   const status = useAudioStore((s) => s.status);
   const error = useAudioStore((s) => s.error);
+  const trackUrl = useAudioStore((s) => s.trackUrl);
+  const load = useAudioStore((s) => s.load);
   const play = useAudioStore((s) => s.play);
   const pause = useAudioStore((s) => s.pause);
   const seek = useAudioStore((s) => s.seek);
@@ -116,10 +123,23 @@ export function PlayerFooter() {
   const [sharing, setSharing] = useState(false);
   const [shareNote, setShareNote] = useState<string | null>(null);
 
+  const track = getCatalogByAudio(trackUrl);
+  const trackIndex = getCatalogIndexByAudio(trackUrl);
   const isPlaying = status === "playing";
   const canControl = status === "ready" || status === "playing";
   const remaining = Math.max(duration - currentTime, 0);
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const canPrev = trackIndex > 0;
+  const canNext = trackIndex < CATALOG.length - 1;
+
+  async function onStep(delta: -1 | 1) {
+    const next = Math.min(CATALOG.length - 1, Math.max(0, trackIndex + delta));
+    if (next === trackIndex) return;
+    const item = CATALOG[next];
+    if (!item?.audio) return;
+    await load(item.audio);
+    await play();
+  }
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -157,17 +177,18 @@ export function PlayerFooter() {
       <div className="pointer-events-auto absolute top-1/2 right-3 flex -translate-y-1/2 flex-col items-center gap-5 md:right-6 md:gap-6">
         <button
           type="button"
-          disabled
-          className="flex h-11 w-11 items-center justify-center bg-transparent"
-          style={{ color: SILVER_DIM }}
-          aria-label="Next"
+          disabled={!canNext || status === "loading"}
+          onClick={() => void onStep(1)}
+          className="flex h-11 w-11 items-center justify-center bg-transparent transition active:opacity-70 disabled:opacity-35"
+          style={{ color: canNext ? SILVER_SOFT : SILVER_DIM }}
+          aria-label="Next track"
         >
           <IconNext />
         </button>
 
         <button
           type="button"
-          disabled={!canControl}
+          disabled={!canControl && status !== "loading"}
           onClick={() => {
             if (isPlaying) pause();
             else void play();
@@ -192,10 +213,11 @@ export function PlayerFooter() {
 
         <button
           type="button"
-          disabled
-          className="flex h-11 w-11 items-center justify-center bg-transparent"
-          style={{ color: SILVER_DIM }}
-          aria-label="Previous"
+          disabled={!canPrev || status === "loading"}
+          onClick={() => void onStep(-1)}
+          className="flex h-11 w-11 items-center justify-center bg-transparent transition active:opacity-70 disabled:opacity-35"
+          style={{ color: canPrev ? SILVER_SOFT : SILVER_DIM }}
+          aria-label="Previous track"
         >
           <IconPrev />
         </button>
@@ -227,7 +249,7 @@ export function PlayerFooter() {
       <div className="pointer-events-auto absolute inset-x-0 bottom-0 safe-area-pad px-4 pb-2 md:px-6 md:pb-3">
         <div className="mx-auto flex w-full max-w-md flex-col gap-3 md:max-w-lg">
           <div className="flex items-center justify-between gap-3">
-            <ShowTitle title="TUSAY" />
+            <ShowTitle title={track.title} />
             <button
               type="button"
               disabled

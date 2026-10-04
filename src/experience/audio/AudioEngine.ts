@@ -17,6 +17,7 @@ export class AudioEngine {
   private listeners = new Set<StatusListener>();
   private boundSource = false;
   private loadGeneration = 0;
+  private endedHandler: (() => void) | null = null;
 
   getBands(): AudioBands {
     if (!this.analyzer || this.status !== "playing") {
@@ -58,6 +59,11 @@ export class AudioEngine {
     this.listeners.add(listener);
     listener(this.status);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Fires once when the current element reaches the end (not on pause/seek). */
+  onEnded(handler: (() => void) | null): void {
+    this.endedHandler = handler;
   }
 
   async load(url: string): Promise<void> {
@@ -104,6 +110,15 @@ export class AudioEngine {
         element.remove();
         return;
       }
+
+      element.addEventListener("ended", () => {
+        if (this.element !== element) return;
+        this.analyzer?.reset();
+        if (this.status === "playing") {
+          this.setStatus("ready");
+        }
+        this.endedHandler?.();
+      });
 
       this.element = element;
       this.setStatus("ready");

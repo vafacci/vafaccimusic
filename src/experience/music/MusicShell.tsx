@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CATALOG, formatTime } from "@/data/catalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
+import { formatPlays, type PlayCounts } from "@/lib/playStats";
 import { useMusicGalleryStore } from "./musicStore";
 
 const Experience = dynamic(
@@ -54,6 +55,7 @@ export function MusicShell() {
   const [padEndPx, setPadEndPx] = useState(0);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [plays, setPlays] = useState<PlayCounts>({});
 
   const release = CATALOG[activeIndex] ?? CATALOG[0]!;
   const playingItem = trackUrl
@@ -131,18 +133,72 @@ export function MusicShell() {
   }, [setActiveIndex, setFloatIndex, setScrollProgress]);
 
   useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      void fetch("/api/plays", { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!alive || !data?.counts) return;
+          setPlays(data.counts as PlayCounts);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const id = window.setInterval(refresh, 15000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  // Refresh counts soon after a new track starts playing.
+  useEffect(() => {
+    if (!trackUrl || status !== "playing") return;
+    const id = window.setTimeout(() => {
+      void fetch("/api/plays", { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data?.counts) return;
+          setPlays(data.counts as PlayCounts);
+        })
+        .catch(() => {});
+    }, 600);
+    return () => window.clearTimeout(id);
+  }, [trackUrl, status]);
+
+  function scrollToIndex(index: number, behavior: ScrollBehavior = "smooth") {
+    const root = scrollerRef.current;
+    const row = rowRefs.current[index];
+    if (!root || !row) return;
+    root.scrollTo({ top: Math.max(0, row.offsetTop), behavior });
+  }
+
+  function focusPlayingOrFirst(behavior: ScrollBehavior = "auto") {
+    const playingIdx = trackUrl
+      ? CATALOG.findIndex((t) => t.audio === trackUrl)
+      : -1;
+    const playingVisible =
+      playingIdx >= 0 &&
+      visibleRef.current.some((entry) => entry.index === playingIdx);
+    const target = playingVisible
+      ? playingIdx
+      : (visibleRef.current[0]?.index ?? -1);
+    if (target < 0) return;
+    scrollToIndex(target, behavior);
+    activeIndexRef.current = target;
+    setActiveIndex(target);
+    setFloatIndex(target);
+    setScrollProgress(maxIndex === 0 ? 0 : target / maxIndex);
+    schedulePaint();
+  }
+
+  useEffect(() => {
     const root = scrollerRef.current;
     if (!root || !booted) return;
 
     requestAnimationFrame(() => {
       syncPad();
-      const first = visibleRef.current[0];
-      if (first) {
-        const row = rowRefs.current[first.index];
-        if (row) {
-          root.scrollTo({ top: Math.max(0, row.offsetTop), behavior: "auto" });
-        }
-      }
+      focusPlayingOrFirst("auto");
       paintFocus();
     });
 
@@ -161,6 +217,31 @@ export function MusicShell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted, normalized, visible.length]);
 
+  // Auto-scroll playlist when the playing track changes (manual select or auto-next).
+  useEffect(() => {
+    if (!booted || !trackUrl) return;
+    const index = CATALOG.findIndex((t) => t.audio === trackUrl);
+    if (index < 0) return;
+
+    const visibleHit = visibleRef.current.some((entry) => entry.index === index);
+    if (!visibleHit && normalized) {
+      setQuery("");
+      setSearchOpen(false);
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      syncPad();
+      scrollToIndex(index, "smooth");
+      activeIndexRef.current = index;
+      setActiveIndex(index);
+      setFloatIndex(index);
+      setScrollProgress(maxIndex === 0 ? 0 : index / maxIndex);
+      schedulePaint();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackUrl, booted]);
+
   useEffect(() => {
     const id = window.setInterval(() => {
       setNow(engine.getCurrentTime());
@@ -174,13 +255,6 @@ export function MusicShell() {
       searchRef.current?.focus();
     }
   }, [searchOpen]);
-
-  function scrollToIndex(index: number) {
-    const root = scrollerRef.current;
-    const row = rowRefs.current[index];
-    if (!root || !row) return;
-    root.scrollTo({ top: Math.max(0, row.offsetTop), behavior: "smooth" });
-  }
 
   async function onSelect(index: number) {
     const item = CATALOG[index];
@@ -248,91 +322,51 @@ export function MusicShell() {
         {booted ? <Experience liftY={0.82} worldScale={0.88} /> : null}
       </div>
 
-      <div className="music-list-shell absolute inset-x-0 z-[3]">
-        <div className="music-focus-rail pointer-events-none" aria-hidden>
-          <div className="music-focus-rail__line" />
-        </div>
-
-        <div ref={scrollerRef} className="music-list">
-          <div className="music-list__track">
-            {visible.length === 0 ? (
-              <p className="music-search-empty">No tracks found</p>
-            ) : (
-              visible.map(({ item, index }) => {
-                const playingThis =
-                  status === "playing" &&
-                  !!item.audio &&
-                  trackUrl === item.audio;
-
-                return (
-                  <button
-                    key={item.id}
-                    ref={(node) => {
-                      rowRefs.current[index] = node;
-                    }}
-                    type="button"
-                    className={`music-row${playingThis ? " is-playing" : ""}`}
-                    onClick={() => void onSelect(index)}
-                    aria-label={
-                      item.audio
-                        ? `${playingThis ? "Pause" : "Play"} ${item.title}`
-                        : `${item.title}, coming soon`
-                    }
-                  >
-                    <span className="music-row__index">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
-                    <span className="music-row__body">
-                      <span className="music-row__title">{item.shortTitle}</span>
-                      <span className="music-row__meta">
-                        {playingThis ? "Playing" : item.title}
-                      </span>
-                    </span>
-                    <span className="music-row__end">
-                      <span className="music-row__duration">
-                        {item.duration ?? "—:—"}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-          <div
-            className="music-list__pad-end"
-            style={{ height: padEndPx }}
-            aria-hidden
-          />
-        </div>
-      </div>
-
       <header className="pointer-events-none absolute inset-x-0 top-0 z-10 safe-area-pad px-4 pt-3 md:px-6 md:pt-4">
         <div className="flex items-center justify-between gap-3">
           <Link href="/" className="brand-mark pointer-events-auto">
             VAFACCI
           </Link>
 
-          <div className="music-search-wrap pointer-events-auto">
+          <div
+            className={`music-search-wrap pointer-events-auto${searchOpen ? " is-open" : ""}`}
+          >
             {searchOpen ? (
               <div className="music-search">
                 <input
                   ref={searchRef}
                   className="music-search__input"
                   type="search"
+                  inputMode="search"
+                  enterKeyHint="done"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Escape") closeSearch();
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      closeSearch();
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      searchRef.current?.blur();
+                      if (!query.trim()) closeSearch();
+                    }
                   }}
-                  placeholder="Search title or ft."
+                  onBlur={() => {
+                    if (!query.trim()) closeSearch();
+                  }}
+                  placeholder="Search"
                   aria-label="Search tracks"
                   autoComplete="off"
                   autoCorrect="off"
+                  autoCapitalize="off"
                   spellCheck={false}
                 />
                 <button
                   type="button"
                   className="music-search__clear"
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={closeSearch}
                   aria-label="Close search"
                 >
@@ -352,94 +386,160 @@ export function MusicShell() {
         </div>
       </header>
 
-      <div className="music-mini pointer-events-none absolute inset-x-0 bottom-0 z-10 safe-area-pad px-4 pb-3 md:px-6 md:pb-4">
-        <div className="music-mini__bar pointer-events-auto">
-          <div className="music-mini__info">
-            <p className="music-mini__title">{miniTitle}</p>
-            <p className="music-mini__time">
-              {playingItem
-                ? `${formatTime(now)} / ${duration > 0 ? formatTime(duration) : (playingItem.duration ?? "0:00")}`
-                : `${CATALOG.length} tracks`}
-            </p>
+      <div className="music-dock pointer-events-none absolute inset-x-0 bottom-0 z-10">
+        <div className="music-list-shell pointer-events-auto">
+          <div className="music-focus-rail" aria-hidden>
+            <div className="music-focus-rail__line" />
           </div>
 
-          <div className="music-mini__controls">
-            <button
-              type="button"
-              className="music-mini__ctrl"
-              onClick={() => void onStep(-1)}
-              aria-label="Previous track"
-              disabled={
-                (playingItem != null
-                  ? CATALOG.findIndex((t) => t.id === playingItem.id)
-                  : activeIndex) <= 0
-              }
-            >
-              <svg viewBox="0 0 24 24" aria-hidden>
-                <path
-                  d="M15.5 6.5L9 12l6.5 5.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="music-mini__ctrl music-mini__ctrl--play"
-              onClick={() => void onMiniToggle()}
-              aria-label={isPlaying ? "Pause" : "Play"}
-              disabled={!release.audio && !playingItem?.audio}
-            >
-              {isPlaying ? (
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <rect x="7" y="6" width="3.2" height="12" fill="currentColor" />
-                  <rect x="13.8" y="6" width="3.2" height="12" fill="currentColor" />
-                </svg>
+          <div ref={scrollerRef} className="music-list">
+            <div className="music-list__track">
+              {visible.length === 0 ? (
+                <p className="music-search-empty">No tracks found</p>
               ) : (
-                <svg viewBox="0 0 24 24" aria-hidden>
-                  <path d="M9 7.2v9.6L17.2 12z" fill="currentColor" />
-                </svg>
-              )}
-            </button>
-            <button
-              type="button"
-              className="music-mini__ctrl"
-              onClick={() => void onStep(1)}
-              aria-label="Next track"
-              disabled={
-                (playingItem != null
-                  ? CATALOG.findIndex((t) => t.id === playingItem.id)
-                  : activeIndex) >= CATALOG.length - 1
-              }
-            >
-              <svg viewBox="0 0 24 24" aria-hidden>
-                <path
-                  d="M8.5 6.5L15 12l-6.5 5.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          </div>
+                visible.map(({ item, index }) => {
+                  const playingThis =
+                    status === "playing" &&
+                    !!item.audio &&
+                    trackUrl === item.audio;
 
-          <input
-            className="player-seek music-mini__seek"
-            type="range"
-            min={0}
-            max={duration || 1}
-            step={0.01}
-            value={Number.isFinite(now) ? now : 0}
-            disabled={!playingItem?.audio && !release.audio}
-            onChange={(e) => seek(Number(e.target.value))}
-            style={{ "--progress": `${progress}%` } as CSSProperties}
-            aria-label="Seek"
-          />
+                  return (
+                    <button
+                      key={item.id}
+                      ref={(node) => {
+                        rowRefs.current[index] = node;
+                      }}
+                      type="button"
+                      className={`music-row${playingThis ? " is-playing" : ""}`}
+                      onClick={() => void onSelect(index)}
+                      aria-label={
+                        item.audio
+                          ? `${playingThis ? "Pause" : "Play"} ${item.title}`
+                          : `${item.title}, coming soon`
+                      }
+                    >
+                      <span className="music-row__index">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>
+                      <span className="music-row__body">
+                        <span className="music-row__title">{item.shortTitle}</span>
+                        <span className="music-row__meta">
+                          {playingThis ? "Playing" : item.title}
+                        </span>
+                      </span>
+                      <span className="music-row__end">
+                        <span
+                          className="music-row__plays"
+                          title={`${plays[item.id] ?? 0} plays`}
+                        >
+                          {formatPlays(plays[item.id] ?? 0)}
+                        </span>
+                        <span className="music-row__duration">
+                          {item.duration ?? "—:—"}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <div
+              className="music-list__pad-end"
+              style={{ height: padEndPx }}
+              aria-hidden
+            />
+          </div>
+        </div>
+
+        <div className="music-mini pointer-events-auto safe-area-pad px-4 pb-3 md:px-6 md:pb-4">
+          <div className="music-mini__bar">
+            <div className="music-mini__info">
+              <p className="music-mini__title">{miniTitle}</p>
+              <p className="music-mini__time">
+                {playingItem
+                  ? `${formatTime(now)} / ${duration > 0 ? formatTime(duration) : (playingItem.duration ?? "0:00")}`
+                  : `${CATALOG.length} tracks`}
+              </p>
+            </div>
+
+            <div className="music-mini__controls">
+              <button
+                type="button"
+                className="music-mini__ctrl"
+                onClick={() => void onStep(-1)}
+                aria-label="Previous track"
+                disabled={
+                  (playingItem != null
+                    ? CATALOG.findIndex((t) => t.id === playingItem.id)
+                    : activeIndex) <= 0
+                }
+              >
+                <svg viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    d="M15.5 6.5L9 12l6.5 5.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="music-mini__ctrl music-mini__ctrl--play"
+                onClick={() => void onMiniToggle()}
+                aria-label={isPlaying ? "Pause" : "Play"}
+                disabled={!release.audio && !playingItem?.audio}
+              >
+                {isPlaying ? (
+                  <svg viewBox="0 0 24 24" aria-hidden>
+                    <rect x="7" y="6" width="3.2" height="12" fill="currentColor" />
+                    <rect x="13.8" y="6" width="3.2" height="12" fill="currentColor" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" aria-hidden>
+                    <path d="M9 7.2v9.6L17.2 12z" fill="currentColor" />
+                  </svg>
+                )}
+              </button>
+              <button
+                type="button"
+                className="music-mini__ctrl"
+                onClick={() => void onStep(1)}
+                aria-label="Next track"
+                disabled={
+                  (playingItem != null
+                    ? CATALOG.findIndex((t) => t.id === playingItem.id)
+                    : activeIndex) >= CATALOG.length - 1
+                }
+              >
+                <svg viewBox="0 0 24 24" aria-hidden>
+                  <path
+                    d="M8.5 6.5L15 12l-6.5 5.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <input
+              className="player-seek music-mini__seek"
+              type="range"
+              min={0}
+              max={duration || 1}
+              step={0.01}
+              value={Number.isFinite(now) ? now : 0}
+              disabled={!playingItem?.audio && !release.audio}
+              onChange={(e) => seek(Number(e.target.value))}
+              style={{ "--progress": `${progress}%` } as CSSProperties}
+              aria-label="Seek"
+            />
+          </div>
         </div>
       </div>
     </main>
