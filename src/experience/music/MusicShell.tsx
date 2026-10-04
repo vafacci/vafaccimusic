@@ -1,19 +1,13 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CATALOG, formatTime } from "@/data/catalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
 import { ensureMediaSession } from "@/experience/audio/mediaSession";
 import { formatPlays, type PlayCounts } from "@/lib/playStats";
+import { PlaylistLoop } from "./PlaylistLoop";
 import { useMusicGalleryStore } from "./musicStore";
-
-const Experience = dynamic(
-  () =>
-    import("@/experience/canvas/Experience").then((m) => m.Experience),
-  { ssr: false },
-);
 
 function matchesQuery(
   item: (typeof CATALOG)[number],
@@ -434,7 +428,7 @@ export function MusicShell() {
 
       <div className="music-stage">
         <div className="music-signature pointer-events-none" aria-hidden>
-          {booted ? <Experience frame="signature" /> : null}
+          <PlaylistLoop />
         </div>
 
         <div className="music-playlist">

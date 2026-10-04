@@ -86,14 +86,14 @@ body {
   box-shadow: none;
 }
 
-/* /music — playlist-first discography with compact signature entity */
+/* /music — playlist under a full-width quiet hero loop */
 .music-page {
   --music-accent: #1aff6a;
   --music-accent-soft: #1aff6a;
   --music-accent-cold: #0a4a8c;
   --music-row-h: 2.85rem;
   --music-visible-rows: 5;
-  --music-signature-h: clamp(200px, 26dvh, 248px);
+  --music-signature-h: clamp(280px, 40dvh, 420px);
   --music-entity-scroll: 0;
   --music-list-h: calc(var(--music-row-h) * var(--music-visible-rows));
   display: flex;
@@ -231,14 +231,14 @@ body {
 .music-search__clear {
   flex-shrink: 0;
   margin: 0;
-  min-width: 2.75rem;
-  min-height: 2.75rem;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1px solid rgba(245, 246, 248, 0.45);
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
+  border: 0;
+  border-radius: 0;
+  background: none;
   color: #f5f6f8;
   font-size: 0.85rem;
   line-height: 1;
@@ -257,9 +257,11 @@ body {
 }
 
 .music-header {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 10;
-  flex-shrink: 0;
 }
 
 .music-stage {
@@ -271,33 +273,65 @@ body {
   flex-direction: column;
 }
 
-/* Compact living signature — not a full-screen hero */
+/* Full-width hero — starts at the top so nav sits inside the video */
 .music-signature {
   position: relative;
   flex-shrink: 0;
+  width: 100%;
   height: var(--music-signature-h);
   overflow: hidden;
-  /* Scroll softens presence only — do not shrink the entity into a blob */
   transform: translate3d(
       0,
-      calc(var(--music-entity-scroll) * -6px),
+      calc(var(--music-entity-scroll) * -4px),
       0
     );
-  opacity: calc(1 - var(--music-entity-scroll) * 0.28);
+  opacity: calc(1 - var(--music-entity-scroll) * 0.18);
   transform-origin: center top;
   will-change: transform, opacity;
   -webkit-mask-image: linear-gradient(
     to bottom,
     #000 0%,
-    #000 72%,
+    #000 78%,
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
     #000 0%,
-    #000 72%,
+    #000 78%,
     transparent 100%
   );
+}
+
+.music-signature::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 5.5rem;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.45) 0%,
+    transparent 100%
+  );
+}
+
+.music-loop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 28%;
+  opacity: 0.78;
+  filter: saturate(0.7) brightness(0.8) contrast(0.94);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .music-loop {
+    opacity: 0.28;
+  }
 }
 
 .music-playlist {
@@ -571,12 +605,19 @@ body {
   place-items: center;
   margin: 0;
   padding: 0;
-  border: 1.5px solid rgba(245, 246, 248, 0.78);
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.72);
+  border: 0;
+  border-radius: 0;
+  background: none;
   color: #ffffff;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  box-shadow: none;
+}
+
+.music-mini__ctrl--play {
+  border: 1.5px solid rgba(245, 246, 248, 0.78);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
 }
 
