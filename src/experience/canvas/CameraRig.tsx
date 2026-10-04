@@ -8,10 +8,18 @@ import { lab01Config } from "@/experience/worlds/lab-01/config";
 import { liveShow } from "@/experience/worlds/lab-01/liveShow";
 import { readShowMobile } from "@/experience/worlds/lab-01/showMobile";
 
+type CameraRigProps = {
+  /**
+   * Pull camera closer (< 1) to frame the same entity in a shorter viewport.
+   * Does not alter entity scale, density, or materials.
+   */
+  zScale?: number;
+};
+
 /**
  * Show-director camera — theatrical dolly / FOV on drop + flash.
  */
-export function CameraRig() {
+export function CameraRig({ zScale = 1 }: CameraRigProps) {
   const { camera } = useThree();
   const target = useRef(new THREE.Vector3());
   const look = useRef(new THREE.Vector3());
@@ -37,7 +45,7 @@ export function CameraRig() {
 
     const [bx, by, bz] = lab01Config.camera.position;
     const isMobile = readShowMobile();
-    const zBase = isMobile ? lab01Config.camera.mobileZ : bz;
+    const zBase = (isMobile ? lab01Config.camera.mobileZ : bz) * zScale;
 
     const dolly =
       sectionAmt.current * (isMobile ? 0.32 : 0.48) +

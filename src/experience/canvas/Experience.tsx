@@ -41,13 +41,16 @@ function RenderQuality() {
 }
 
 type ExperienceProps = {
-  /** Extra world Y lift — used on /music so the entity clears the playlist. */
-  liftY?: number;
-  /** Uniform world scale — slightly under 1 on /music. */
-  worldScale?: number;
+  /**
+   * `signature` = same entity, tighter camera framing for a shorter viewport crop.
+   * Does not change geometry, materials, colors, or particle density.
+   */
+  frame?: "full" | "signature";
 };
 
-export function Experience({ liftY = 0, worldScale = 1 }: ExperienceProps) {
+export function Experience({ frame = "full" }: ExperienceProps) {
+  const zScale = frame === "signature" ? 0.78 : 1;
+
   return (
     <Canvas
       className="h-full w-full touch-none"
@@ -75,10 +78,8 @@ export function Experience({ liftY = 0, worldScale = 1 }: ExperienceProps) {
         <CanvasBridge />
         <BandSync />
         <Lighting />
-        <CameraRig />
-        <group position={[0, liftY, 0]} scale={worldScale}>
-          <Lab01World />
-        </group>
+        <CameraRig zScale={zScale} />
+        <Lab01World />
       </Suspense>
     </Canvas>
   );

@@ -71,15 +71,18 @@ body {
   outline: none;
 }
 
-/* /music — dark cinematic playlist */
+/* /music — playlist-first discography with compact signature entity */
 .music-page {
-  /* Thermal / night-vision: cold blue → NV green → hot orange */
   --music-accent: #1aff6a;
   --music-accent-soft: #1aff6a;
   --music-accent-cold: #0a4a8c;
-  --music-row-h: 3.35rem;
-  --music-visible-rows: 4;
+  --music-row-h: 2.85rem;
+  --music-visible-rows: 5;
+  --music-signature-h: clamp(200px, 26dvh, 248px);
+  --music-entity-scroll: 0;
   --music-list-h: calc(var(--music-row-h) * var(--music-visible-rows));
+  display: flex;
+  flex-direction: column;
   background: #000000;
   color: #e8f0ec;
 }
@@ -167,7 +170,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.25rem;
-  border-bottom: 1px solid rgba(26, 255, 106, 0.4);
+  border-bottom: 1px solid color-mix(in srgb, var(--music-accent-soft) 40%, transparent);
   padding-bottom: 0.15rem;
 }
 
@@ -227,30 +230,79 @@ body {
   color: rgba(160, 166, 176, 0.4);
 }
 
-/* Full-bleed 3D stage — same canvas framing as landing */
-.music-hero {
-  inset: 0;
-  height: auto;
-  overflow: hidden;
+.music-header {
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
 }
 
-/* Bottom stack: playlist + mini player (no absolute height guessing) */
-.music-dock {
+.music-stage {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+}
+
+/* Compact living signature — not a full-screen hero */
+.music-signature {
+  position: relative;
+  flex-shrink: 0;
+  height: var(--music-signature-h);
+  overflow: hidden;
+  /* Scroll softens presence only — do not shrink the entity into a blob */
+  transform: translate3d(
+      0,
+      calc(var(--music-entity-scroll) * -6px),
+      0
+    );
+  opacity: calc(1 - var(--music-entity-scroll) * 0.28);
+  transform-origin: center top;
+  will-change: transform, opacity;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 72%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 72%,
+    transparent 100%
+  );
+}
+
+.music-playlist {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: linear-gradient(
     to bottom,
-    transparent 0%,
-    rgba(0, 0, 0, 0.55) 18%,
-    rgba(0, 0, 0, 0.94) 42%,
-    #000 100%
+    rgba(0, 0, 0, 0.15) 0%,
+    rgba(0, 0, 0, 0.82) 12%,
+    #000 28%
   );
+}
+
+.music-playlist__label {
+  flex-shrink: 0;
+  margin: 0 auto;
+  padding: 0.15rem 0 0.35rem;
+  width: min(92vw, 26rem);
+  font-family: "Times New Roman", Times, serif;
+  font-size: 0.58rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(197, 202, 211, 0.38);
 }
 
 .music-list-shell {
   position: relative;
-  height: var(--music-list-h);
+  flex: 1;
+  min-height: var(--music-list-h);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -270,13 +322,13 @@ body {
   width: min(92vw, 26rem);
   margin: 0 auto;
   height: 100%;
-  border-top: 1px solid rgba(26, 255, 106, 0.28);
-  border-bottom: 1px solid rgba(26, 255, 106, 0.28);
+  border-top: 1px solid color-mix(in srgb, var(--music-accent-soft) 32%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--music-accent-soft) 32%, transparent);
   background: linear-gradient(
     to right,
     transparent 0%,
-    rgba(26, 255, 106, 0.05) 20%,
-    rgba(26, 255, 106, 0.05) 80%,
+    color-mix(in srgb, var(--music-accent-soft) 6%, transparent) 20%,
+    color-mix(in srgb, var(--music-accent-soft) 6%, transparent) 80%,
     transparent 100%
   );
   mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
@@ -363,7 +415,7 @@ body {
 
 .music-row__title {
   font-family: "Times New Roman", Times, serif;
-  font-size: clamp(0.78rem, 3.2vw, 0.95rem);
+  font-size: clamp(0.72rem, 3vw, 0.88rem);
   font-weight: 400;
   letter-spacing: 0.16em;
   text-indent: 0;
@@ -381,23 +433,39 @@ body {
 
 .music-row__meta {
   font-family: "Times New Roman", Times, serif;
-  font-size: 0.5rem;
-  letter-spacing: 0.18em;
+  font-size: 0.48rem;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: rgba(160, 166, 176, 0.36);
+  color: rgba(160, 166, 176, 0.32);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-height: 0;
-  opacity: 0;
+  opacity: 0.7;
 }
 
-.music-row.is-active .music-row__meta {
+.music-row.is-active .music-row__meta,
+.music-row.is-current .music-row__meta {
   opacity: 1;
 }
 
 .music-row.is-playing .music-row__meta {
   color: var(--music-accent-soft);
+}
+
+.music-row.is-current .music-row__index,
+.music-row.is-playing .music-row__index {
+  color: var(--music-accent-soft);
+}
+
+.music-row.is-current .music-row__title,
+.music-row.is-playing .music-row__title {
+  color: rgba(244, 245, 247, 0.96);
+}
+
+.music-row.is-current .music-row__plays,
+.music-row.is-playing .music-row__plays {
+  color: color-mix(in srgb, var(--music-accent-soft) 55%, transparent);
 }
 
 .music-row__end {
@@ -418,7 +486,7 @@ body {
 }
 
 .music-row.is-active .music-row__plays {
-  color: rgba(26, 255, 106, 0.55);
+  color: color-mix(in srgb, var(--music-accent-soft) 55%, transparent);
 }
 
 .music-row__duration {

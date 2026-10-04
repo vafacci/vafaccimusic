@@ -56,6 +56,8 @@ export function MusicShell() {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [plays, setPlays] = useState<PlayCounts>({});
+  const [entityScroll, setEntityScroll] = useState(0);
+  const pageRef = useRef<HTMLElement>(null);
 
   const release = CATALOG[activeIndex] ?? CATALOG[0]!;
   const playingItem = trackUrl
@@ -256,6 +258,22 @@ export function MusicShell() {
     }
   }, [searchOpen]);
 
+  useEffect(() => {
+    const root = scrollerRef.current;
+    if (!root || !booted) return;
+
+    const onScroll = () => {
+      const rowH = rowRefs.current.find(Boolean)?.offsetHeight ?? 48;
+      const t = Math.min(1, Math.max(0, root.scrollTop / (rowH * 2.4)));
+      setEntityScroll(t);
+      schedulePaint();
+    };
+
+    onScroll();
+    root.addEventListener("scroll", onScroll, { passive: true });
+    return () => root.removeEventListener("scroll", onScroll);
+  }, [booted, visible.length]);
+
   async function onSelect(index: number) {
     const item = CATALOG[index];
     if (!item) return;
@@ -310,19 +328,23 @@ export function MusicShell() {
     setSearchOpen(false);
   }
 
+  const pageStyle = {
+    "--music-entity-scroll": String(entityScroll),
+  } as CSSProperties;
+
   return (
-    <main className="music-page relative h-dvh w-full overflow-hidden text-white">
+    <main
+      ref={pageRef}
+      className="music-page relative h-dvh w-full overflow-hidden text-white"
+      style={pageStyle}
+    >
       <div className="music-bg" aria-hidden>
         <div className="music-bg__haze" />
         <div className="music-bg__grain" />
         <div className="music-bg__vignette" />
       </div>
 
-      <div className="music-hero pointer-events-none absolute z-[1]">
-        {booted ? <Experience liftY={0.82} worldScale={0.88} /> : null}
-      </div>
-
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-10 safe-area-pad px-4 pt-3 md:px-6 md:pt-4">
+      <header className="music-header pointer-events-none safe-area-pad px-4 pt-3 md:px-6 md:pt-4">
         <div className="flex items-center justify-between gap-3">
           <Link href="/" className="brand-mark pointer-events-auto">
             VAFACCI
@@ -386,72 +408,80 @@ export function MusicShell() {
         </div>
       </header>
 
-      <div className="music-dock pointer-events-none absolute inset-x-0 bottom-0 z-10">
-        <div className="music-list-shell pointer-events-auto">
-          <div className="music-focus-rail" aria-hidden>
-            <div className="music-focus-rail__line" />
-          </div>
+      <div className="music-stage">
+        <div className="music-signature pointer-events-none" aria-hidden>
+          {booted ? <Experience frame="signature" /> : null}
+        </div>
 
-          <div ref={scrollerRef} className="music-list">
-            <div className="music-list__track">
-              {visible.length === 0 ? (
-                <p className="music-search-empty">No tracks found</p>
-              ) : (
-                visible.map(({ item, index }) => {
-                  const playingThis =
-                    status === "playing" &&
-                    !!item.audio &&
-                    trackUrl === item.audio;
-
-                  return (
-                    <button
-                      key={item.id}
-                      ref={(node) => {
-                        rowRefs.current[index] = node;
-                      }}
-                      type="button"
-                      className={`music-row${playingThis ? " is-playing" : ""}`}
-                      onClick={() => void onSelect(index)}
-                      aria-label={
-                        item.audio
-                          ? `${playingThis ? "Pause" : "Play"} ${item.title}`
-                          : `${item.title}, coming soon`
-                      }
-                    >
-                      <span className="music-row__index">
-                        {String(index + 1).padStart(2, "0")}
-                      </span>
-                      <span className="music-row__body">
-                        <span className="music-row__title">{item.shortTitle}</span>
-                        <span className="music-row__meta">
-                          {playingThis ? "Playing" : item.title}
-                        </span>
-                      </span>
-                      <span className="music-row__end">
-                        <span
-                          className="music-row__plays"
-                          title={`${plays[item.id] ?? 0} plays`}
-                        >
-                          {formatPlays(plays[item.id] ?? 0)}
-                        </span>
-                        <span className="music-row__duration">
-                          {item.duration ?? "—:—"}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })
-              )}
+        <div className="music-playlist">
+          <p className="music-playlist__label">Playlist</p>
+          <div className="music-list-shell">
+            <div className="music-focus-rail" aria-hidden>
+              <div className="music-focus-rail__line" />
             </div>
-            <div
-              className="music-list__pad-end"
-              style={{ height: padEndPx }}
-              aria-hidden
-            />
+
+            <div ref={scrollerRef} className="music-list">
+              <div className="music-list__track">
+                {visible.length === 0 ? (
+                  <p className="music-search-empty">No tracks found</p>
+                ) : (
+                  visible.map(({ item, index }) => {
+                    const playingThis =
+                      status === "playing" &&
+                      !!item.audio &&
+                      trackUrl === item.audio;
+                    const loadedThis = !!item.audio && trackUrl === item.audio;
+
+                    return (
+                      <button
+                        key={item.id}
+                        ref={(node) => {
+                          rowRefs.current[index] = node;
+                        }}
+                        type="button"
+                        className={`music-row${playingThis ? " is-playing" : ""}${loadedThis ? " is-current" : ""}`}
+                        onClick={() => void onSelect(index)}
+                        aria-label={
+                          item.audio
+                            ? `${playingThis ? "Pause" : "Play"} ${item.title}`
+                            : `${item.title}, coming soon`
+                        }
+                      >
+                        <span className="music-row__index">
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
+                        <span className="music-row__body">
+                          <span className="music-row__title">{item.shortTitle}</span>
+                          <span className="music-row__meta">
+                            {playingThis ? "Playing" : item.title}
+                          </span>
+                        </span>
+                        <span className="music-row__end">
+                          <span
+                            className="music-row__plays"
+                            title={`${plays[item.id] ?? 0} plays`}
+                          >
+                            {formatPlays(plays[item.id] ?? 0)}
+                          </span>
+                          <span className="music-row__duration">
+                            {item.duration ?? "—:—"}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              <div
+                className="music-list__pad-end"
+                style={{ height: padEndPx }}
+                aria-hidden
+              />
+            </div>
           </div>
         </div>
 
-        <div className="music-mini pointer-events-auto safe-area-pad px-4 pb-3 md:px-6 md:pb-4">
+        <div className="music-mini safe-area-pad px-4 pb-3 md:px-6 md:pb-4">
           <div className="music-mini__bar">
             <div className="music-mini__info">
               <p className="music-mini__title">{miniTitle}</p>
