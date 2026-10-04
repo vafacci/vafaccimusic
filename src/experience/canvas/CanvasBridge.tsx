@@ -2,7 +2,10 @@
 
 import { useThree } from "@react-three/fiber";
 import { useEffect } from "react";
-import { registerCanvasBridge, unregisterCanvasBridge } from "./canvasBridge";
+import {
+  registerCanvasBridge,
+  unregisterCanvasBridge,
+} from "./liveCanvasBridge";
 
 /** Exposes the live WebGL canvas to UI (share-frame capture). */
 export function CanvasBridge() {

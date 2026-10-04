@@ -1,4 +1,4 @@
-import { getLiveCanvas } from "@/experience/canvas/canvasBridge";
+import { getLiveCanvas } from "@/experience/canvas/liveCanvasBridge";
 
 const STORY_W = 1080;
 const STORY_H = 1920;
