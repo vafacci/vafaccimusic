@@ -1,6 +1,10 @@
 /**
  * Discography catalog for the /music playlist.
- * Designed for a growing discography (10+ tracks) with scroll under the hero.
+ *
+ * ORDER RULE: newest releases first. Always prepend new tracks at the top
+ * of CATALOG so they show first in /music and next/prev navigation.
+ * Copy source files from /assets into /public/audio with URL-safe names,
+ * then add the entry here.
  */
 export type CatalogRelease = {
   id: string;
@@ -14,6 +18,30 @@ export type CatalogRelease = {
 };
 
 export const CATALOG: CatalogRelease[] = [
+  {
+    id: "kfc-ft-farli-facci-omar",
+    title: "KFC ft. farli x facci x omar",
+    shortTitle: "KFC",
+    artist: "VAFACCI",
+    duration: "2:17",
+    audio: "/audio/kfc-ft-farli-facci-omar.mp3",
+  },
+  {
+    id: "hold-ud-ft-facci-farli",
+    title: "HOLD UD ft. facci x farli",
+    shortTitle: "HOLD UD",
+    artist: "VAFACCI",
+    duration: "1:35",
+    audio: "/audio/hold-ud-ft-facci-farli.mp3",
+  },
+  {
+    id: "amos-ft-farli-omsehh-hamsi",
+    title: "AMOS ft. farli x omsehh x hamsi",
+    shortTitle: "AMOS",
+    artist: "VAFACCI",
+    duration: "1:16",
+    audio: "/audio/amos-ft-farli-omsehh-hamsi.mp3",
+  },
   {
     id: "tusay-ft-facci",
     title: "TUSAY ft. facci",
