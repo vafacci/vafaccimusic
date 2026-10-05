@@ -1,4 +1,4 @@
-import { head, put } from "@vercel/blob";
+import { get, put } from "@vercel/blob";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CATALOG } from "@/data/catalog";
@@ -47,14 +47,24 @@ async function writeLocal(counts: PlayCounts): Promise<void> {
   await writeFile(LOCAL_PATH, JSON.stringify(counts), "utf8");
 }
 
+/**
+ * Private blobs cannot be fetched via the public URL (403).
+ * Must use authenticated `get()` — otherwise every increment resets all counts.
+ */
 async function readBlob(): Promise<PlayCounts> {
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
   try {
-    const meta = await head(BLOB_PATH, {
-      token: process.env.BLOB_READ_WRITE_TOKEN,
+    const result = await get(BLOB_PATH, {
+      access: "private",
+      token,
+      useCache: false,
     });
-    const res = await fetch(meta.url, { cache: "no-store" });
-    if (!res.ok) return emptyCounts();
-    return normalize(await res.json());
+    if (!result || result.statusCode !== 200 || !result.stream) {
+      return emptyCounts();
+    }
+    const text = await new Response(result.stream).text();
+    if (!text.trim()) return emptyCounts();
+    return normalize(JSON.parse(text));
   } catch {
     return emptyCounts();
   }
@@ -71,6 +81,7 @@ async function writeBlob(counts: PlayCounts): Promise<void> {
   });
 }
 
+/** Durable play totals — Vercel Blob in prod, local `.data` in dev without token. */
 export async function getPlayCounts(): Promise<PlayCounts> {
   if (hasBlobToken()) return readBlob();
   return readLocal();

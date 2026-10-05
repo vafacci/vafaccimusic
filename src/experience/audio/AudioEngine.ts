@@ -15,6 +15,10 @@ type CaptureCapableMedia = HTMLAudioElement & {
  * Speakers always come from a long-lived HTMLAudioElement.
  * Analysis is opt-in (visual lab) and prefers captureStream so iOS can keep
  * playing after the tab is hidden / the phone is locked.
+ *
+ * Critical for lock-screen auto-next: never replace the HTMLAudioElement when
+ * advancing tracks — only swap `src` on the same node so iOS keeps the
+ * media-session playback privilege.
  */
 export class AudioEngine {
   private context: AudioContext | null = null;
@@ -35,6 +39,10 @@ export class AudioEngine {
   /** Page is hidden; keep analysis detached until visible again. */
   private backgrounded = false;
   private handoffChain: Promise<void> = Promise.resolve();
+  private endedBound = false;
+  /** Warm next track while current plays (lock-screen auto-advance). */
+  private preloadEl: HTMLAudioElement | null = null;
+  private preloadUrl: string | null = null;
 
   getBands(): AudioBands {
     if (!this.analyzer || this.status !== "playing" || this.backgrounded) {
@@ -88,6 +96,28 @@ export class AudioEngine {
   }
 
   /**
+   * Warm the next catalog URL so lock-screen auto-advance is not cold.
+   * Safe to call repeatedly; no-ops if already preloading that URL.
+   */
+  preload(url: string | null | undefined): void {
+    if (!url || url === this.trackUrl || url === this.preloadUrl) return;
+    this.clearPreload();
+    const el = new Audio();
+    el.preload = "auto";
+    el.setAttribute("playsinline", "");
+    el.src = url;
+    el.style.display = "none";
+    document.body.appendChild(el);
+    try {
+      el.load();
+    } catch {
+      // ignore
+    }
+    this.preloadEl = el;
+    this.preloadUrl = url;
+  }
+
+  /**
    * Enable/disable FFT analysis for the visual lab.
    * Safe to call from React mount/unmount — releases MediaElementSource while
    * visible so /music can background-play on a plain element.
@@ -111,45 +141,27 @@ export class AudioEngine {
     this.trackUrl = url;
 
     try {
-      this.pause();
-      await this.detachAnalysis({ restoreNativeOutput: false });
-      this.teardownElement();
-
-      const element = this.createElement(url);
-      document.body.appendChild(element);
-
-      await new Promise<void>((resolve, reject) => {
-        const onCanPlay = () => {
-          cleanup();
-          resolve();
-        };
-        const onError = () => {
-          cleanup();
-          reject(new Error(`Failed to load audio: ${url}`));
-        };
-        const cleanup = () => {
-          element.removeEventListener("canplaythrough", onCanPlay);
-          element.removeEventListener("error", onError);
-        };
-
-        element.addEventListener("canplaythrough", onCanPlay, { once: true });
-        element.addEventListener("error", onError, { once: true });
-        element.load();
-      });
-
-      // Discard stale loads (React Strict Mode / rapid remounts).
-      if (generation !== this.loadGeneration) {
-        element.pause();
-        element.removeAttribute("src");
-        element.load();
-        element.remove();
+      // Same long-lived element: required for iOS lock-screen auto-next.
+      if (this.element) {
+        await this.swapSource(url, generation);
         return;
       }
 
+      const element = this.createElement(url);
+      document.body.appendChild(element);
       this.bindEnded(element);
+
+      await this.waitUntilPlayable(element, generation);
+
+      if (generation !== this.loadGeneration) {
+        this.destroyElementNode(element);
+        return;
+      }
+
       this.element = element;
       this.usingMediaElementSource = false;
       this.setStatus("ready");
+      this.consumePreloadIfMatch(url);
     } catch (error) {
       if (generation !== this.loadGeneration) return;
       const message =
@@ -248,6 +260,7 @@ export class AudioEngine {
     this.pause();
     void this.detachAnalysis({ restoreNativeOutput: false });
     this.teardownElement();
+    this.clearPreload();
     this.trackUrl = null;
     this.backgrounded = false;
     this.analysisWanted = false;
@@ -258,6 +271,83 @@ export class AudioEngine {
     }
 
     this.setStatus("idle");
+  }
+
+  private async swapSource(url: string, generation: number): Promise<void> {
+    const element = this.element;
+    if (!element) {
+      throw new Error("No audio element");
+    }
+
+    // Drop analysis taps before changing src (keeps native output path clean).
+    await this.detachAnalysis({ restoreNativeOutput: false });
+    this.usingMediaElementSource = false;
+
+    const wasPlaying =
+      this.status === "playing" || (!element.paused && !element.ended);
+    if (wasPlaying || !element.paused) {
+      element.pause();
+    }
+
+    element.crossOrigin = "anonymous";
+    element.src = url;
+    element.load();
+
+    await this.waitUntilPlayable(element, generation);
+
+    if (generation !== this.loadGeneration) return;
+
+    try {
+      element.currentTime = 0;
+    } catch {
+      // ignore
+    }
+
+    this.setStatus("ready");
+    this.consumePreloadIfMatch(url);
+  }
+
+  private waitUntilPlayable(
+    element: HTMLAudioElement,
+    generation: number,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (generation !== this.loadGeneration) {
+        resolve();
+        return;
+      }
+      // readyState >= 3 (HAVE_FUTURE_DATA) / 4 is enough to start
+      if (element.readyState >= 3) {
+        resolve();
+        return;
+      }
+
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        // Soft-resolve: play() may still succeed with partial buffer
+        if (element.readyState >= 2) resolve();
+        else reject(new Error(`Timed out loading audio: ${element.src}`));
+      }, 20000);
+
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error(`Failed to load audio: ${element.src}`));
+      };
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        element.removeEventListener("canplay", onReady);
+        element.removeEventListener("loadeddata", onReady);
+        element.removeEventListener("error", onError);
+      };
+
+      element.addEventListener("canplay", onReady, { once: true });
+      element.addEventListener("loadeddata", onReady, { once: true });
+      element.addEventListener("error", onError, { once: true });
+    });
   }
 
   private withHandoff(fn: () => Promise<void>): Promise<void> {
@@ -377,7 +467,6 @@ export class AudioEngine {
     element.preload = "auto";
     element.setAttribute("playsinline", "");
     element.setAttribute("webkit-playsinline", "");
-    // Prefer media / playback channel over ringer on supporting browsers
     try {
       (
         element as HTMLAudioElement & { mozAudioChannelType?: string }
@@ -391,6 +480,7 @@ export class AudioEngine {
   }
 
   private bindEnded(element: HTMLAudioElement): void {
+    if (this.endedBound && this.element === element) return;
     element.addEventListener("ended", () => {
       if (this.element !== element) return;
       this.analyzer?.reset();
@@ -399,6 +489,7 @@ export class AudioEngine {
       }
       this.endedHandler?.();
     });
+    this.endedBound = true;
   }
 
   private async rebuildElement(
@@ -409,6 +500,7 @@ export class AudioEngine {
     const previous = this.element;
     const element = this.createElement(url);
     document.body.appendChild(element);
+    this.endedBound = false;
     this.bindEnded(element);
 
     await new Promise<void>((resolve) => {
@@ -429,7 +521,6 @@ export class AudioEngine {
       }
     }
 
-    // Start the replacement before killing the old node (keeps media session warmer).
     if (autoplay) {
       try {
         await element.play();
@@ -439,10 +530,7 @@ export class AudioEngine {
     }
 
     if (previous) {
-      previous.pause();
-      previous.removeAttribute("src");
-      previous.load();
-      previous.remove();
+      this.destroyElementNode(previous);
     }
 
     this.element = element;
@@ -483,14 +571,37 @@ export class AudioEngine {
     return this.context;
   }
 
+  private consumePreloadIfMatch(url: string): void {
+    if (this.preloadUrl === url) {
+      this.clearPreload();
+    }
+  }
+
+  private clearPreload(): void {
+    if (this.preloadEl) {
+      this.destroyElementNode(this.preloadEl);
+      this.preloadEl = null;
+    }
+    this.preloadUrl = null;
+  }
+
+  private destroyElementNode(element: HTMLAudioElement): void {
+    element.pause();
+    element.removeAttribute("src");
+    try {
+      element.load();
+    } catch {
+      // ignore
+    }
+    element.remove();
+  }
+
   private teardownElement(): void {
     if (this.element) {
-      this.element.pause();
-      this.element.removeAttribute("src");
-      this.element.load();
-      this.element.remove();
+      this.destroyElementNode(this.element);
       this.element = null;
     }
+    this.endedBound = false;
     this.usingMediaElementSource = false;
   }
 

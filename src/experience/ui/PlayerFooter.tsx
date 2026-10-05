@@ -8,6 +8,7 @@ import {
 } from "@/data/catalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
 import { shareTrackLink } from "./shareTrackLink";
+import { SeekBar } from "./SeekBar";
 import { ShowTitle } from "./ShowTitle";
 
 /* Near-white chrome — readable outdoors against glare */
@@ -16,13 +17,6 @@ const SILVER_DIM = "rgba(245, 246, 248, 0.78)";
 const SILVER_SOFT = "rgba(245, 246, 248, 0.94)";
 const CTRL_BG = "rgba(0, 0, 0, 0.72)";
 const CTRL_BORDER = "rgba(245, 246, 248, 0.88)";
-
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
 
 function IconPrev() {
   return (
@@ -118,11 +112,7 @@ export function PlayerFooter() {
   const load = useAudioStore((s) => s.load);
   const play = useAudioStore((s) => s.play);
   const pause = useAudioStore((s) => s.pause);
-  const seek = useAudioStore((s) => s.seek);
-  const engine = useAudioStore((s) => s.engine);
 
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [sharing, setSharing] = useState(false);
   const [shareNote, setShareNote] = useState<string | null>(null);
 
@@ -130,8 +120,6 @@ export function PlayerFooter() {
   const trackIndex = getCatalogIndexByAudio(trackUrl);
   const isPlaying = status === "playing";
   const canControl = status === "ready" || status === "playing";
-  const remaining = Math.max(duration - currentTime, 0);
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
   const canPrev = trackIndex > 0;
   const canNext = trackIndex < CATALOG.length - 1;
 
@@ -143,14 +131,6 @@ export function PlayerFooter() {
     await load(item.audio);
     await play();
   }
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setCurrentTime(engine.getCurrentTime());
-      setDuration(engine.getDuration());
-    }, 250);
-    return () => window.clearInterval(id);
-  }, [engine]);
 
   useEffect(() => {
     if (!shareNote) return;
@@ -294,25 +274,11 @@ export function PlayerFooter() {
               </button>
             </div>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={duration || 1}
-            step={0.01}
-            value={Math.min(currentTime, duration || 0)}
-            disabled={!canControl || duration <= 0}
-            onChange={(e) => seek(Number(e.target.value))}
-            className="player-seek w-full"
-            style={{ "--progress": `${progress}%` } as CSSProperties}
-            aria-label="Seek"
+          <SeekBar
+            className="w-full"
+            disabled={!canControl}
+            showTimes
           />
-          <div
-            className="flex justify-between text-[12px] font-medium tabular-nums tracking-wide"
-            style={{ color: SILVER_DIM }}
-          >
-            <span>{formatTime(currentTime)}</span>
-            <span>-{formatTime(remaining)}</span>
-          </div>
         </div>
 
         {error ? (

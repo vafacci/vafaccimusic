@@ -12,7 +12,7 @@ import {
 } from "./AudioAnalyzer";
 import { AudioEngine, type AudioEngineStatus } from "./AudioEngine";
 
-/** Last track URL we already counted a listen for (avoid pause/resume doubles). */
+/** Session dedupe: same URL counted once until it ends or another track loads. */
 let lastCountedUrl: string | null = null;
 
 function recordPlay(trackUrl: string | null) {
@@ -25,9 +25,16 @@ function recordPlay(trackUrl: string | null) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ trackId: track.id }),
     keepalive: true,
-  }).catch(() => {
-    // analytics must never break playback
-  });
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        // Allow a later play() to retry if the write failed
+        if (lastCountedUrl === trackUrl) lastCountedUrl = null;
+      }
+    })
+    .catch(() => {
+      if (lastCountedUrl === trackUrl) lastCountedUrl = null;
+    });
 }
 
 /**
@@ -80,16 +87,44 @@ export const useAudioStore = create<AudioStore>((set, get) => {
   });
 
   engine.onEnded(() => {
-    const { trackUrl, load, play } = get();
+    const finishedUrl = get().trackUrl;
+    // Allow the same track to count again on a later replay
+    if (lastCountedUrl === finishedUrl) lastCountedUrl = null;
+
+    const { trackUrl, load, play, engine: eng } = get();
     const index = getCatalogIndexByAudio(trackUrl);
     const next = CATALOG[index + 1];
     if (!next?.audio) return;
+
+    // Same HTMLAudioElement swap — required so iOS lock screen keeps playing.
     void load(next.audio)
       .then(() => play())
       .catch(() => {
-        // leave status/error from load
+        // One retry: src may still be buffering after lock
+        window.setTimeout(() => {
+          void eng
+            .play()
+            .then(() => recordPlay(get().trackUrl))
+            .catch(() => undefined);
+        }, 250);
       });
   });
+
+  // Warm the next track while current plays (helps auto-next under lock).
+  if (typeof window !== "undefined") {
+    window.setInterval(() => {
+      const { status, trackUrl, engine: eng } = get();
+      if (status !== "playing" || !trackUrl) return;
+      const duration = eng.getDuration();
+      const now = eng.getCurrentTime();
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      // Start warming ~20s before the end (or immediately on short tracks).
+      if (duration - now > 20 && duration > 25) return;
+      const index = getCatalogIndexByAudio(trackUrl);
+      const next = CATALOG[index + 1];
+      if (next?.audio) eng.preload(next.audio);
+    }, 4000);
+  }
 
   return {
     engine,

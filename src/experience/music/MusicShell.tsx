@@ -2,12 +2,13 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { CATALOG, formatTime } from "@/data/catalog";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CATALOG } from "@/data/catalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
 import { ensureMediaSession } from "@/experience/audio/mediaSession";
 import { formatPlays, type PlayCounts } from "@/lib/playStats";
 import { ShowTitle } from "@/experience/ui/ShowTitle";
+import { SeekBar } from "@/experience/ui/SeekBar";
 import { TrackMoreMenu } from "./TrackMoreMenu";
 import { useMusicGalleryStore } from "./musicStore";
 
@@ -41,17 +42,13 @@ export function MusicShell() {
   const setFloatIndex = useMusicGalleryStore((s) => s.setFloatIndex);
   const setActiveIndex = useMusicGalleryStore((s) => s.setActiveIndex);
 
-  const engine = useAudioStore((s) => s.engine);
   const status = useAudioStore((s) => s.status);
   const trackUrl = useAudioStore((s) => s.trackUrl);
   const load = useAudioStore((s) => s.load);
   const play = useAudioStore((s) => s.play);
   const pause = useAudioStore((s) => s.pause);
-  const seek = useAudioStore((s) => s.seek);
 
   const [booted, setBooted] = useState(false);
-  const [now, setNow] = useState(0);
-  const [duration, setDuration] = useState(0);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [plays, setPlays] = useState<PlayCounts>({});
@@ -63,9 +60,6 @@ export function MusicShell() {
     : null;
   const isPlaying = status === "playing";
   const miniTitle = playingItem?.title ?? release.title;
-  const progress =
-    duration > 0 ? Math.min(100, Math.max(0, (now / duration) * 100)) : 0;
-  const remaining = Math.max(duration - now, 0);
   const canPrev =
     (playingItem != null
       ? CATALOG.findIndex((t) => t.id === playingItem.id)
@@ -200,14 +194,6 @@ export function MusicShell() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackUrl, booted]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setNow(engine.getCurrentTime());
-      setDuration(engine.getDuration());
-    }, 200);
-    return () => window.clearInterval(id);
-  }, [engine]);
 
   useEffect(() => {
     if (searchOpen) {
@@ -479,27 +465,11 @@ export function MusicShell() {
               </div>
             </div>
 
-            <input
-              className="player-seek music-mini__seek"
-              type="range"
-              min={0}
-              max={duration || 1}
-              step={0.01}
-              value={Number.isFinite(now) ? now : 0}
+            <SeekBar
+              className="music-mini__seek"
               disabled={!playingItem?.audio && !release.audio}
-              onChange={(e) => seek(Number(e.target.value))}
-              style={{ "--progress": `${progress}%` } as CSSProperties}
-              aria-label="Seek"
+              showTimes
             />
-
-            <div className="music-mini__times">
-              <span>{playingItem ? formatTime(now) : "0:00"}</span>
-              <span>
-                {playingItem && duration > 0
-                  ? `-${formatTime(remaining)}`
-                  : `-${playingItem?.duration ?? "0:00"}`}
-              </span>
-            </div>
           </div>
         </div>
       </div>
