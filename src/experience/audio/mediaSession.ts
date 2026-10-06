@@ -72,18 +72,18 @@ export function ensureMediaSession(): void {
         .seek(engine.getCurrentTime() + step);
     });
     set("previoustrack", () => {
-      const { trackUrl, load, play } = useAudioStore.getState();
+      const { trackUrl, advanceTo } = useAudioStore.getState();
       const index = getCatalogIndexByAudio(trackUrl);
       const prev = CATALOG[index - 1];
       if (!prev?.audio) return;
-      void load(prev.audio).then(() => play());
+      void advanceTo(prev.audio);
     });
     set("nexttrack", () => {
-      const { trackUrl, load, play } = useAudioStore.getState();
+      const { trackUrl, advanceTo } = useAudioStore.getState();
       const index = getCatalogIndexByAudio(trackUrl);
       const next = CATALOG[index + 1];
       if (!next?.audio) return;
-      void load(next.audio).then(() => play());
+      void advanceTo(next.audio);
     });
   };
 

@@ -186,6 +186,62 @@ export class AudioEngine {
     this.setStatus("playing");
   }
 
+  /**
+   * Auto-next / lock-screen advance.
+   *
+   * iOS only keeps the media-session privilege if `play()` runs in the same
+   * turn as the previous element's `ended` (no awaiting canplay/network).
+   * Prefer a warm preloaded element; otherwise swap `src` and play immediately.
+   */
+  advanceTo(url: string): Promise<void> {
+    this.claimPlaybackSession();
+    this.trackUrl = url;
+    this.loadGeneration += 1;
+
+    // Drop analysis taps without blocking play() — never await here.
+    void this.detachAnalysis({ restoreNativeOutput: false });
+    this.usingMediaElementSource = false;
+
+    // 1) Promote warm preload — already buffering / ready
+    if (this.preloadEl && this.preloadUrl === url) {
+      const next = this.preloadEl;
+      const prev = this.element;
+      this.preloadEl = null;
+      this.preloadUrl = null;
+      this.endedBound = false;
+      this.bindEnded(next);
+      this.element = next;
+
+      const playPromise = next.play();
+      this.setStatus("playing");
+
+      if (prev) {
+        // Defer teardown so we don't stall the play() kickoff
+        window.setTimeout(() => this.destroyElementNode(prev), 0);
+      }
+
+      return playPromise.then(() => undefined);
+    }
+
+    // 2) Same element, new src — play immediately (do not wait for canplay)
+    if (this.element) {
+      const element = this.element;
+      element.crossOrigin = "anonymous";
+      element.src = url;
+      try {
+        element.load();
+      } catch {
+        // ignore
+      }
+      const playPromise = element.play();
+      this.setStatus("playing");
+      return playPromise.then(() => undefined);
+    }
+
+    // 3) Cold start (shouldn't happen mid-playlist)
+    return this.load(url).then(() => this.play());
+  }
+
   pause(): void {
     this.element?.pause();
     this.analyzer?.reset();

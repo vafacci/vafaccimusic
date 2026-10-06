@@ -37,6 +37,16 @@ function recordPlay(trackUrl: string | null) {
     });
 }
 
+function nextCatalogAudio(trackUrl: string | null): string | null {
+  const index = getCatalogIndexByAudio(trackUrl);
+  return CATALOG[index + 1]?.audio ?? null;
+}
+
+function prevCatalogAudio(trackUrl: string | null): string | null {
+  const index = getCatalogIndexByAudio(trackUrl);
+  return CATALOG[index - 1]?.audio ?? null;
+}
+
 /**
  * Mutable analysis snapshot — read from useFrame, not React state.
  */
@@ -61,6 +71,8 @@ type AudioStore = {
   play: () => Promise<void>;
   pause: () => void;
   seek: (time: number) => void;
+  /** Lock-screen safe skip — play() in the same turn, no canplay wait. */
+  advanceTo: (url: string) => Promise<void>;
   toggleSave: () => void;
   syncBands: () => void;
 };
@@ -88,42 +100,39 @@ export const useAudioStore = create<AudioStore>((set, get) => {
 
   engine.onEnded(() => {
     const finishedUrl = get().trackUrl;
-    // Allow the same track to count again on a later replay
     if (lastCountedUrl === finishedUrl) lastCountedUrl = null;
 
-    const { trackUrl, load, play, engine: eng } = get();
-    const index = getCatalogIndexByAudio(trackUrl);
-    const next = CATALOG[index + 1];
-    if (!next?.audio) return;
+    const nextUrl = nextCatalogAudio(finishedUrl);
+    if (!nextUrl) return;
 
-    // Same HTMLAudioElement swap — required so iOS lock screen keeps playing.
-    void load(next.audio)
-      .then(() => play())
+    // Must kick play() inside this ended turn — awaiting load/canplay kills iOS.
+    set({ trackUrl: nextUrl, error: null });
+    void engine
+      .advanceTo(nextUrl)
+      .then(() => {
+        recordPlay(nextUrl);
+        const following = nextCatalogAudio(nextUrl);
+        if (following) engine.preload(following);
+      })
       .catch(() => {
-        // One retry: src may still be buffering after lock
+        // One delayed retry (unlock / buffer edge cases)
         window.setTimeout(() => {
-          void eng
-            .play()
-            .then(() => recordPlay(get().trackUrl))
+          void engine
+            .advanceTo(nextUrl)
+            .then(() => recordPlay(nextUrl))
             .catch(() => undefined);
-        }, 250);
+        }, 400);
       });
   });
 
-  // Warm the next track while current plays (helps auto-next under lock).
+  // Keep the upcoming track warm the whole time a song plays.
   if (typeof window !== "undefined") {
     window.setInterval(() => {
       const { status, trackUrl, engine: eng } = get();
       if (status !== "playing" || !trackUrl) return;
-      const duration = eng.getDuration();
-      const now = eng.getCurrentTime();
-      if (!Number.isFinite(duration) || duration <= 0) return;
-      // Start warming ~20s before the end (or immediately on short tracks).
-      if (duration - now > 20 && duration > 25) return;
-      const index = getCatalogIndexByAudio(trackUrl);
-      const next = CATALOG[index + 1];
-      if (next?.audio) eng.preload(next.audio);
-    }, 4000);
+      const next = nextCatalogAudio(trackUrl);
+      if (next) eng.preload(next);
+    }, 5000);
   }
 
   return {
@@ -151,6 +160,16 @@ export const useAudioStore = create<AudioStore>((set, get) => {
     async play() {
       await engine.play();
       recordPlay(get().trackUrl);
+      const next = nextCatalogAudio(get().trackUrl);
+      if (next) engine.preload(next);
+    },
+
+    async advanceTo(url: string) {
+      set({ trackUrl: url, error: null });
+      await engine.advanceTo(url);
+      recordPlay(url);
+      const next = nextCatalogAudio(url);
+      if (next) engine.preload(next);
     },
 
     pause() {
@@ -186,3 +205,5 @@ export const useAudioStore = create<AudioStore>((set, get) => {
     },
   };
 });
+
+export { nextCatalogAudio, prevCatalogAudio };
