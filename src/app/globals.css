@@ -817,6 +817,23 @@ body {
   color: rgba(245, 246, 248, 0.55);
 }
 
+.track-drop__bar {
+  display: block;
+  width: 100%;
+  height: 3px;
+  margin-top: 0.45rem;
+  border-radius: 999px;
+  background: rgba(245, 246, 248, 0.18);
+  overflow: hidden;
+}
+
+.track-drop__bar-fill {
+  display: block;
+  height: 100%;
+  background: #f5f6f8;
+  transition: width 120ms linear;
+}
+
 .track-drop__input {
   position: absolute;
   width: 1px;

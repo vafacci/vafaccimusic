@@ -8,28 +8,39 @@ export const runtime = "nodejs";
  * straight to Vercel Blob (avoids the ~4.5MB serverless body limit).
  */
 export async function POST(request: Request) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!token) {
     return NextResponse.json(
       { error: "Blob storage is not configured" },
       { status: 503 },
     );
   }
 
-  const body = (await request.json()) as HandleUploadBody;
+  let body: HandleUploadBody;
+  try {
+    body = (await request.json()) as HandleUploadBody;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
   try {
     const json = await handleUpload({
       body,
       request,
+      token,
       onBeforeGenerateToken: async () => ({
+        // iOS / Android often send empty type or octet-stream
         allowedContentTypes: [
           "audio/mpeg",
           "audio/mp3",
           "audio/wav",
           "audio/x-wav",
+          "audio/wave",
           "audio/mp4",
           "audio/aac",
           "audio/x-m4a",
+          "audio/m4a",
+          "application/octet-stream",
         ],
         maximumSizeInBytes: 40 * 1024 * 1024,
         addRandomSuffix: false,
@@ -40,6 +51,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Upload token failed";
+    console.error("[tracks/upload]", message);
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
