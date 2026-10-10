@@ -19,6 +19,14 @@ export type CatalogRelease = {
 
 export const CATALOG: CatalogRelease[] = [
   {
+    id: "teed-up-ft-dior-xander",
+    title: "TEED UP ft. dior x xander",
+    shortTitle: "TEED UP",
+    artist: "VAFACCI",
+    duration: "1:52",
+    audio: "/audio/teed-up-ft-dior-xander.mp3",
+  },
+  {
     id: "tinetus-k4bz",
     title: "TINETUS - k4bz",
     shortTitle: "TINETUS",

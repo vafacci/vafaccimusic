@@ -9,6 +9,9 @@ type TrackDropZoneProps = {
   onUploaded: (track: CatalogRelease, tracks: CatalogRelease[]) => void;
 };
 
+/** Stay under Vercel serverless body limit (~4.5MB) with margin. */
+const SERVER_UPLOAD_MAX = 4.2 * 1024 * 1024;
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const id = window.setTimeout(() => {
@@ -57,6 +60,110 @@ function guessContentType(file: File): string {
   return "audio/mpeg";
 }
 
+async function uploadViaServer(
+  file: File,
+  duration: string | undefined,
+  onProgress: (pct: number) => void,
+): Promise<{ track: CatalogRelease; tracks: CatalogRelease[] }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const body = new FormData();
+    body.append("file", file);
+    if (duration) body.append("duration", duration);
+
+    xhr.open("POST", "/api/tracks");
+    xhr.timeout = 90_000;
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || event.total <= 0) return;
+      // Cap at 95% until the server responds — avoids fake "99% stuck"
+      const pct = Math.min(95, Math.round((event.loaded / event.total) * 95));
+      onProgress(pct);
+    };
+
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText) as {
+          error?: string;
+          track?: CatalogRelease;
+          tracks?: CatalogRelease[];
+        };
+        if (xhr.status >= 200 && xhr.status < 300 && data.track && data.tracks) {
+          onProgress(100);
+          resolve({ track: data.track, tracks: data.tracks });
+          return;
+        }
+        reject(new Error(data.error || `Upload failed (${xhr.status})`));
+      } catch {
+        reject(new Error(`Upload failed (${xhr.status})`));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.ontimeout = () => reject(new Error("Upload timed out — try Wi‑Fi"));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+
+    xhr.send(body);
+  });
+}
+
+async function uploadViaBlobClient(
+  file: File,
+  duration: string | undefined,
+  onProgress: (pct: number) => void,
+): Promise<{ track: CatalogRelease; tracks: CatalogRelease[] }> {
+  const bare = file.name.replace(/\.[^.]+$/, "");
+  const id = slugifyTrackId(bare) || `track-${Date.now()}`;
+  const ext = (file.name.split(".").pop() || "mp3").toLowerCase();
+  const contentType = guessContentType(file);
+  const controller = new AbortController();
+  const hardTimeout = window.setTimeout(() => controller.abort(), 90_000);
+
+  try {
+    // No onUploadProgress → uses fetch (more reliable than XHR stuck at 99%)
+    onProgress(10);
+    const blob = await withTimeout(
+      upload(`tracks/audio/${id}.${ext}`, file, {
+        access: "public",
+        handleUploadUrl: "/api/tracks/upload",
+        contentType,
+        multipart: false,
+        abortSignal: controller.signal,
+      }),
+      90_000,
+      "Blob upload",
+    );
+    onProgress(90);
+
+    const res = await withTimeout(
+      fetch("/api/tracks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: blob.url,
+          filename: file.name,
+          duration,
+          id,
+        }),
+      }),
+      20_000,
+      "Saving track",
+    );
+    const data = (await res.json()) as {
+      error?: string;
+      track?: CatalogRelease;
+      tracks?: CatalogRelease[];
+    };
+    if (!res.ok || !data.track || !data.tracks) {
+      throw new Error(data.error || "Could not add track");
+    }
+    onProgress(100);
+    return { track: data.track, tracks: data.tracks };
+  } finally {
+    window.clearTimeout(hardTimeout);
+  }
+}
+
 /**
  * Drop / pick an audio file on Tracks — uploads and prepends to the playlist.
  */
@@ -67,76 +174,39 @@ export function TrackDropZone({ onUploaded }: TrackDropZoneProps) {
   const [percent, setPercent] = useState(0);
   const [note, setNote] = useState<string | null>(null);
 
-  async function registerTrack(payload: {
-    url: string;
-    filename: string;
-    duration?: string;
-    id: string;
-  }) {
-    const res = await fetch("/api/tracks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = (await res.json()) as {
-      error?: string;
-      track?: CatalogRelease;
-      tracks?: CatalogRelease[];
-    };
-    if (!res.ok || !data.track || !data.tracks) {
-      throw new Error(data.error || "Could not add track");
-    }
-    return data;
-  }
-
   async function uploadFile(file: File) {
     if (busy) return;
     setBusy(true);
     setPercent(0);
     setNote(`Uploading ${file.name}…`);
 
-    const controller = new AbortController();
-    const hardTimeout = window.setTimeout(() => {
-      controller.abort();
-    }, 90_000);
-
     try {
       const duration = await readAudioDuration(file);
-      const bare = file.name.replace(/\.[^.]+$/, "");
-      const id = slugifyTrackId(bare) || `track-${Date.now()}`;
-      const ext = (file.name.split(".").pop() || "mp3").toLowerCase();
-      const contentType = guessContentType(file);
+      const useServer = file.size <= SERVER_UPLOAD_MAX;
 
-      // Direct-to-Blob from the browser (bypasses serverless body size limits).
-      const blob = await upload(`tracks/audio/${id}.${ext}`, file, {
-        access: "public",
-        handleUploadUrl: "/api/tracks/upload",
-        contentType,
-        // Keep simple PUT — multipart has been flaky on mobile Safari
-        multipart: false,
-        abortSignal: controller.signal,
-        onUploadProgress: ({ percentage }) => {
-          setPercent(Math.round(percentage));
-          setNote(`Uploading ${file.name}… ${Math.round(percentage)}%`);
-        },
-      });
-
-      setPercent(100);
-      setNote("Saving to playlist…");
-
-      const data = await withTimeout(
-        registerTrack({
-          url: blob.url,
-          filename: file.name,
-          duration,
-          id,
-        }),
-        20_000,
-        "Saving track",
+      setNote(
+        useServer
+          ? `Uploading ${file.name}…`
+          : `Uploading ${file.name} (large file)…`,
       );
 
-      onUploaded(data.track!, data.tracks!);
-      setNote(`Added ${data.track!.shortTitle}`);
+      const result = useServer
+        ? await uploadViaServer(file, duration, (pct) => {
+            setPercent(pct);
+            setNote(`Uploading ${file.name}… ${pct}%`);
+          })
+        : await uploadViaBlobClient(file, duration, (pct) => {
+            setPercent(pct);
+            setNote(
+              pct < 90
+                ? `Uploading ${file.name}…`
+                : `Finishing ${file.name}…`,
+            );
+          });
+
+      onUploaded(result.track, result.tracks);
+      setPercent(100);
+      setNote(`Added ${result.track.shortTitle}`);
       window.setTimeout(() => setNote(null), 2200);
     } catch (err) {
       const aborted =
@@ -149,7 +219,6 @@ export function TrackDropZone({ onUploaded }: TrackDropZoneProps) {
       setNote(message);
       window.setTimeout(() => setNote(null), 4500);
     } finally {
-      window.clearTimeout(hardTimeout);
       setBusy(false);
       setPercent(0);
       if (inputRef.current) inputRef.current.value = "";
@@ -198,10 +267,7 @@ export function TrackDropZone({ onUploaded }: TrackDropZoneProps) {
             : "mp3 / wav · or tap to choose"}
         </span>
         {busy ? (
-          <span
-            className="track-drop__bar"
-            aria-hidden
-          >
+          <span className="track-drop__bar" aria-hidden>
             <span
               className="track-drop__bar-fill"
               style={{ width: `${Math.max(percent, 4)}%` }}
