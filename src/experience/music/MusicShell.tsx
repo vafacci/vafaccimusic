@@ -3,12 +3,14 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CATALOG } from "@/data/catalog";
+import type { CatalogRelease } from "@/data/catalog";
+import { getLiveCatalog, setUploadedTracks } from "@/data/liveCatalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
 import { ensureMediaSession } from "@/experience/audio/mediaSession";
 import { formatPlays, type PlayCounts } from "@/lib/playStats";
 import { ShowTitle } from "@/experience/ui/ShowTitle";
 import { SeekBar } from "@/experience/ui/SeekBar";
+import { TrackDropZone } from "./TrackDropZone";
 import { TrackMoreMenu } from "./TrackMoreMenu";
 import { useMusicGalleryStore } from "./musicStore";
 
@@ -17,25 +19,20 @@ const MusicScene = dynamic(
   { ssr: false },
 );
 
-function matchesQuery(
-  item: (typeof CATALOG)[number],
-  normalized: string,
-): boolean {
+function matchesQuery(item: CatalogRelease, normalized: string): boolean {
   if (!normalized) return true;
   const hay = `${item.title} ${item.shortTitle} ${item.artist}`.toLowerCase();
   return hay.includes(normalized);
 }
 
 /**
- * /music — modern aligned playlist + live search.
+ * /music — playlist + drop-to-upload + live search.
  */
 export function MusicShell() {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const visibleRef = useRef<{ item: (typeof CATALOG)[number]; index: number }[]>(
-    [],
-  );
+  const visibleRef = useRef<{ item: CatalogRelease; index: number }[]>([]);
 
   const activeIndex = useMusicGalleryStore((s) => s.activeIndex);
   const setScrollProgress = useMusicGalleryStore((s) => s.setScrollProgress);
@@ -52,32 +49,39 @@ export function MusicShell() {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [plays, setPlays] = useState<PlayCounts>({});
+  const [catalog, setCatalog] = useState<CatalogRelease[]>(() =>
+    getLiveCatalog(),
+  );
   const pageRef = useRef<HTMLElement>(null);
 
-  const release = CATALOG[activeIndex] ?? CATALOG[0]!;
+  function refreshCatalog() {
+    setCatalog(getLiveCatalog());
+  }
+
+  const release = catalog[activeIndex] ?? catalog[0]!;
   const playingItem = trackUrl
-    ? (CATALOG.find((t) => t.audio && t.audio === trackUrl) ?? null)
+    ? (catalog.find((t) => t.audio && t.audio === trackUrl) ?? null)
     : null;
   const isPlaying = status === "playing";
-  const miniTitle = playingItem?.title ?? release.title;
+  const miniTitle = playingItem?.title ?? release?.title ?? "VAFACCI";
   const canPrev =
     (playingItem != null
-      ? CATALOG.findIndex((t) => t.id === playingItem.id)
+      ? catalog.findIndex((t) => t.id === playingItem.id)
       : activeIndex) > 0;
   const canNext =
     (playingItem != null
-      ? CATALOG.findIndex((t) => t.id === playingItem.id)
-      : activeIndex) < CATALOG.length - 1;
+      ? catalog.findIndex((t) => t.id === playingItem.id)
+      : activeIndex) < catalog.length - 1;
 
   const normalized = query.trim().toLowerCase();
   const visible = useMemo(() => {
-    return CATALOG.map((item, index) => ({ item, index })).filter(({ item }) =>
-      matchesQuery(item, normalized),
-    );
-  }, [normalized]);
+    return catalog
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => matchesQuery(item, normalized));
+  }, [catalog, normalized]);
   visibleRef.current = visible;
 
-  const maxIndex = Math.max(CATALOG.length - 1, 0);
+  const maxIndex = Math.max(catalog.length - 1, 0);
 
   function markActive(index: number) {
     setActiveIndex(index);
@@ -87,28 +91,41 @@ export function MusicShell() {
 
   useEffect(() => {
     ensureMediaSession();
+    let cancelled = false;
 
-    const params = new URLSearchParams(window.location.search);
-    const trackId = params.get("track");
-    const fromLink = trackId
-      ? CATALOG.findIndex((t) => t.id === trackId)
-      : -1;
-    const startIndex = fromLink >= 0 ? fromLink : 0;
+    void fetch("/api/tracks", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.tracks) return;
+        setUploadedTracks(data.tracks as CatalogRelease[]);
+        refreshCatalog();
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (cancelled) return;
+        const list = getLiveCatalog();
+        const params = new URLSearchParams(window.location.search);
+        const trackId = params.get("track");
+        const fromLink = trackId
+          ? list.findIndex((t) => t.id === trackId)
+          : -1;
+        const startIndex = fromLink >= 0 ? fromLink : 0;
+        markActive(startIndex);
+        setBooted(true);
 
-    markActive(startIndex);
-    setBooted(true);
+        if (fromLink >= 0) {
+          const item = list[fromLink];
+          if (item?.audio) {
+            void load(item.audio)
+              .then(() => play())
+              .catch(() => undefined);
+          }
+        }
+      });
 
-    // Deep link: open the exact shared track
-    if (fromLink >= 0) {
-      const item = CATALOG[fromLink];
-      if (item?.audio) {
-        void load(item.audio)
-          .then(() => play())
-          .catch(() => {
-            // autoplay may be blocked; track is still loaded/focused
-          });
-      }
-    }
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, play, setActiveIndex, setFloatIndex, setScrollProgress]);
 
@@ -131,7 +148,6 @@ export function MusicShell() {
     };
   }, []);
 
-  // Refresh counts soon after a new track starts playing.
   useEffect(() => {
     if (!trackUrl || status !== "playing") return;
     const id = window.setTimeout(() => {
@@ -154,7 +170,7 @@ export function MusicShell() {
 
   function focusPlayingOrFirst(behavior: ScrollBehavior = "auto") {
     const playingIdx = trackUrl
-      ? CATALOG.findIndex((t) => t.audio === trackUrl)
+      ? catalog.findIndex((t) => t.audio === trackUrl)
       : -1;
     const playingVisible =
       playingIdx >= 0 &&
@@ -173,15 +189,16 @@ export function MusicShell() {
       focusPlayingOrFirst("auto");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booted, normalized, visible.length]);
+  }, [booted, normalized, visible.length, catalog.length]);
 
-  // Keep the playing track in view on auto-next / deep link.
   useEffect(() => {
     if (!booted || !trackUrl) return;
-    const index = CATALOG.findIndex((t) => t.audio === trackUrl);
+    const index = catalog.findIndex((t) => t.audio === trackUrl);
     if (index < 0) return;
 
-    const visibleHit = visibleRef.current.some((entry) => entry.index === index);
+    const visibleHit = visibleRef.current.some(
+      (entry) => entry.index === index,
+    );
     if (!visibleHit && normalized) {
       setQuery("");
       setSearchOpen(false);
@@ -193,7 +210,7 @@ export function MusicShell() {
       markActive(index);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackUrl, booted]);
+  }, [trackUrl, booted, catalog]);
 
   useEffect(() => {
     if (searchOpen) {
@@ -202,7 +219,7 @@ export function MusicShell() {
   }, [searchOpen]);
 
   async function onSelect(index: number) {
-    const item = CATALOG[index];
+    const item = catalog[index];
     if (!item) return;
 
     scrollToIndex(index);
@@ -223,7 +240,7 @@ export function MusicShell() {
 
   async function onMiniToggle() {
     const item = playingItem ?? release;
-    if (!item.audio) return;
+    if (!item?.audio) return;
     if (status === "playing" && trackUrl === item.audio) {
       pause();
       return;
@@ -235,13 +252,13 @@ export function MusicShell() {
   }
 
   async function onStep(delta: -1 | 1) {
+    const list = getLiveCatalog();
     const base =
       playingItem != null
-        ? CATALOG.findIndex((t) => t.id === playingItem.id)
+        ? list.findIndex((t) => t.id === playingItem.id)
         : activeIndex;
-    const next = Math.min(CATALOG.length - 1, Math.max(0, base + delta));
+    const next = Math.min(list.length - 1, Math.max(0, base + delta));
     if (next === base) return;
-    // Clear search so prev/next can reach full catalog
     if (normalized) {
       setQuery("");
       setSearchOpen(false);
@@ -252,6 +269,20 @@ export function MusicShell() {
   function closeSearch() {
     setQuery("");
     setSearchOpen(false);
+  }
+
+  function onTrackUploaded(track: CatalogRelease, tracks: CatalogRelease[]) {
+    setUploadedTracks(tracks);
+    refreshCatalog();
+    markActive(0);
+    requestAnimationFrame(() => {
+      scrollToIndex(0, "smooth");
+    });
+    if (track.audio) {
+      void load(track.audio)
+        .then(() => play())
+        .catch(() => undefined);
+    }
   }
 
   return (
@@ -335,6 +366,11 @@ export function MusicShell() {
       <div className="music-stage">
         <div className="music-playlist">
           <div className="music-list-shell">
+            <div className="pointer-events-auto px-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))]">
+              <div className="mx-auto w-full max-w-[26rem]">
+                <TrackDropZone onUploaded={onTrackUploaded} />
+              </div>
+            </div>
             <div ref={scrollerRef} className="music-list">
               <div className="music-list__track">
                 {visible.length === 0 ? (
@@ -423,7 +459,7 @@ export function MusicShell() {
                   className="music-mini__ctrl music-mini__ctrl--play"
                   onClick={() => void onMiniToggle()}
                   aria-label={isPlaying ? "Pause" : "Play"}
-                  disabled={!release.audio && !playingItem?.audio}
+                  disabled={!release?.audio && !playingItem?.audio}
                 >
                   {isPlaying ? (
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -467,7 +503,7 @@ export function MusicShell() {
 
             <SeekBar
               className="music-mini__seek"
-              disabled={!playingItem?.audio && !release.audio}
+              disabled={!playingItem?.audio && !release?.audio}
               showTimes
             />
           </div>

@@ -1,5 +1,10 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# Local upload / play-count fallbacks
+/.data
+/public/uploads/*
+!/public/uploads/.gitkeep
+
 # dependencies
 /node_modules
 /.pnp

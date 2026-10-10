@@ -2,10 +2,10 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import {
-  CATALOG,
   getCatalogByAudio,
   getCatalogIndexByAudio,
-} from "@/data/catalog";
+  getLiveCatalog,
+} from "@/data/liveCatalog";
 import { useAudioStore } from "@/experience/audio/audioStore";
 import { shareTrackLink } from "./shareTrackLink";
 import { SeekBar } from "./SeekBar";
@@ -116,17 +116,19 @@ export function PlayerFooter() {
   const [sharing, setSharing] = useState(false);
   const [shareNote, setShareNote] = useState<string | null>(null);
 
+  const catalog = getLiveCatalog();
   const track = getCatalogByAudio(trackUrl);
   const trackIndex = getCatalogIndexByAudio(trackUrl);
   const isPlaying = status === "playing";
   const canControl = status === "ready" || status === "playing";
   const canPrev = trackIndex > 0;
-  const canNext = trackIndex < CATALOG.length - 1;
+  const canNext = trackIndex < catalog.length - 1;
 
   async function onStep(delta: -1 | 1) {
-    const next = Math.min(CATALOG.length - 1, Math.max(0, trackIndex + delta));
+    const list = getLiveCatalog();
+    const next = Math.min(list.length - 1, Math.max(0, trackIndex + delta));
     if (next === trackIndex) return;
-    const item = CATALOG[next];
+    const item = list[next];
     if (!item?.audio) return;
     await load(item.audio);
     await play();

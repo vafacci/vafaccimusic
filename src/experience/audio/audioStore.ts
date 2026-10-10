@@ -4,8 +4,8 @@ import { create } from "zustand";
 import {
   getCatalogByAudio,
   getCatalogIndexByAudio,
-  CATALOG,
-} from "@/data/catalog";
+  getLiveCatalog,
+} from "@/data/liveCatalog";
 import {
   WAVEFORM_SIZE,
   type AudioBands,
@@ -38,13 +38,15 @@ function recordPlay(trackUrl: string | null) {
 }
 
 function nextCatalogAudio(trackUrl: string | null): string | null {
+  const list = getLiveCatalog();
   const index = getCatalogIndexByAudio(trackUrl);
-  return CATALOG[index + 1]?.audio ?? null;
+  return list[index + 1]?.audio ?? null;
 }
 
 function prevCatalogAudio(trackUrl: string | null): string | null {
+  const list = getLiveCatalog();
   const index = getCatalogIndexByAudio(trackUrl);
-  return CATALOG[index - 1]?.audio ?? null;
+  return list[index - 1]?.audio ?? null;
 }
 
 /**

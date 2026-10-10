@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CATALOG } from "@/data/catalog";
 import type { PlayCounts } from "@/lib/playStats";
+import { getUploadedTracks } from "@/lib/trackCatalog";
 
 export type { PlayCounts } from "@/lib/playStats";
 export { formatPlays } from "@/lib/playStats";
@@ -10,16 +11,19 @@ export { formatPlays } from "@/lib/playStats";
 const BLOB_PATH = "plays/counts.json";
 const LOCAL_PATH = path.join(process.cwd(), ".data", "plays.json");
 
-function emptyCounts(): PlayCounts {
+function emptyCounts(extraIds: string[] = []): PlayCounts {
   const counts: PlayCounts = {};
   for (const track of CATALOG) {
     counts[track.id] = 0;
   }
+  for (const id of extraIds) {
+    counts[id] = counts[id] ?? 0;
+  }
   return counts;
 }
 
-function normalize(raw: unknown): PlayCounts {
-  const base = emptyCounts();
+function normalize(raw: unknown, extraIds: string[] = []): PlayCounts {
+  const base = emptyCounts(extraIds);
   if (!raw || typeof raw !== "object") return base;
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
@@ -29,16 +33,24 @@ function normalize(raw: unknown): PlayCounts {
   return base;
 }
 
+async function knownTrackIds(): Promise<Set<string>> {
+  const uploaded = await getUploadedTracks();
+  return new Set([
+    ...CATALOG.map((t) => t.id),
+    ...uploaded.map((t) => t.id),
+  ]);
+}
+
 function hasBlobToken(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
 
-async function readLocal(): Promise<PlayCounts> {
+async function readLocal(extraIds: string[] = []): Promise<PlayCounts> {
   try {
     const text = await readFile(LOCAL_PATH, "utf8");
-    return normalize(JSON.parse(text));
+    return normalize(JSON.parse(text), extraIds);
   } catch {
-    return emptyCounts();
+    return emptyCounts(extraIds);
   }
 }
 
@@ -51,7 +63,7 @@ async function writeLocal(counts: PlayCounts): Promise<void> {
  * Private blobs cannot be fetched via the public URL (403).
  * Must use authenticated `get()` — otherwise every increment resets all counts.
  */
-async function readBlob(): Promise<PlayCounts> {
+async function readBlob(extraIds: string[] = []): Promise<PlayCounts> {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   try {
     const result = await get(BLOB_PATH, {
@@ -60,13 +72,13 @@ async function readBlob(): Promise<PlayCounts> {
       useCache: false,
     });
     if (!result || result.statusCode !== 200 || !result.stream) {
-      return emptyCounts();
+      return emptyCounts(extraIds);
     }
     const text = await new Response(result.stream).text();
-    if (!text.trim()) return emptyCounts();
-    return normalize(JSON.parse(text));
+    if (!text.trim()) return emptyCounts(extraIds);
+    return normalize(JSON.parse(text), extraIds);
   } catch {
-    return emptyCounts();
+    return emptyCounts(extraIds);
   }
 }
 
@@ -83,12 +95,14 @@ async function writeBlob(counts: PlayCounts): Promise<void> {
 
 /** Durable play totals — Vercel Blob in prod, local `.data` in dev without token. */
 export async function getPlayCounts(): Promise<PlayCounts> {
-  if (hasBlobToken()) return readBlob();
-  return readLocal();
+  const ids = [...(await knownTrackIds())];
+  if (hasBlobToken()) return readBlob(ids);
+  return readLocal(ids);
 }
 
 export async function incrementPlay(trackId: string): Promise<PlayCounts> {
-  if (!CATALOG.some((t) => t.id === trackId)) {
+  const known = await knownTrackIds();
+  if (!known.has(trackId)) {
     throw new Error("Unknown track");
   }
 

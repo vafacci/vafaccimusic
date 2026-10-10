@@ -19,6 +19,14 @@ export type CatalogRelease = {
 
 export const CATALOG: CatalogRelease[] = [
   {
+    id: "tinetus-k4bz",
+    title: "TINETUS - k4bz",
+    shortTitle: "TINETUS",
+    artist: "VAFACCI",
+    duration: "2:44",
+    audio: "/audio/tinetus-k4bz.mp3",
+  },
+  {
     id: "kfc-ft-farli-facci-omar",
     title: "KFC ft. farli x facci x omar",
     shortTitle: "KFC",
@@ -138,23 +146,4 @@ export function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-/** Resolve catalog entry from the currently loaded audio URL. */
-export function getCatalogByAudio(
-  url: string | null | undefined,
-): CatalogRelease {
-  if (url) {
-    const hit = CATALOG.find((t) => t.audio === url);
-    if (hit) return hit;
-  }
-  return CATALOG[0]!;
-}
-
-export function getCatalogIndexByAudio(
-  url: string | null | undefined,
-): number {
-  if (!url) return 0;
-  const i = CATALOG.findIndex((t) => t.audio === url);
-  return i >= 0 ? i : 0;
 }

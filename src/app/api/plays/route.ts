@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { CATALOG } from "@/data/catalog";
 import { getPlayCounts, incrementPlay } from "@/lib/plays";
 
 export const runtime = "nodejs";
@@ -22,8 +21,8 @@ export async function POST(request: Request) {
       ? String((body as { trackId: unknown }).trackId)
       : "";
 
-  if (!CATALOG.some((t) => t.id === trackId)) {
-    return NextResponse.json({ error: "Unknown track" }, { status: 400 });
+  if (!trackId) {
+    return NextResponse.json({ error: "Missing trackId" }, { status: 400 });
   }
 
   try {
@@ -32,6 +31,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to record play";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = message === "Unknown track" ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

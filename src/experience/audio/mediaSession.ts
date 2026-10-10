@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  CATALOG,
   getCatalogByAudio,
   getCatalogIndexByAudio,
-} from "@/data/catalog";
+  getLiveCatalog,
+} from "@/data/liveCatalog";
 import { useAudioStore } from "./audioStore";
 
 let wired = false;
@@ -73,15 +73,17 @@ export function ensureMediaSession(): void {
     });
     set("previoustrack", () => {
       const { trackUrl, advanceTo } = useAudioStore.getState();
+      const list = getLiveCatalog();
       const index = getCatalogIndexByAudio(trackUrl);
-      const prev = CATALOG[index - 1];
+      const prev = list[index - 1];
       if (!prev?.audio) return;
       void advanceTo(prev.audio);
     });
     set("nexttrack", () => {
       const { trackUrl, advanceTo } = useAudioStore.getState();
+      const list = getLiveCatalog();
       const index = getCatalogIndexByAudio(trackUrl);
-      const next = CATALOG[index + 1];
+      const next = list[index + 1];
       if (!next?.audio) return;
       void advanceTo(next.audio);
     });
